@@ -1,0 +1,21 @@
+# Local parameter files with real paths — do not commit
+params_*.yml
+
+
+# Nextflow working directories and logs
+work/
+.nextflow/
+.nextflow.log*
+*.log
+*.out
+
+# Pipeline visualization — kept: dag.html, dag.png
+
+# Python virtual environment and bytecode
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Generated output
+results/

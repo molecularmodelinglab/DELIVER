@@ -1,0 +1,73 @@
+# DELIVER pipeline parameters
+# This is the only file you need to edit before running the pipeline.
+#
+# The pipeline detects the run mode automatically:
+#   forward_reads set → FASTQ input (preprocess → DELi → postprocessing)
+#   counts_file set   → counts.parquet input (postprocessing only)
+#
+# Usage:
+#   sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR
+#   Add --resume to resume after failure
+
+# -----------------------------------------------------------------------
+# INPUT — change for every run
+# -----------------------------------------------------------------------
+
+# FASTQ input files
+# forward_reads: R1 files (one or more lanes) — may be .fastq or .fastq.gz
+# reverse_reads: R2 files for paired-end; leave empty or remove for single-end
+forward_reads:
+  - "/path/to/sample_L001_R1.fastq.gz"
+  - "/path/to/sample_L002_R1.fastq.gz"
+reverse_reads:
+  - "/path/to/sample_L001_R2.fastq.gz"
+  - "/path/to/sample_L002_R2.fastq.gz"
+
+# Output directory for results
+out_dir: "/path/to/results"
+
+# Counts parquet file — set this instead of forward_reads to skip decoding
+counts_file: null
+
+# DELi data directory (libraries, building blocks, etc.)
+deli_data_dir: "/path/to/deli_data"
+
+# -----------------------------------------------------------------------
+# SELECTION METADATA — used to generate decode.yaml and name output files
+# -----------------------------------------------------------------------
+selection_id:         "my_selection"
+target_id:            "my_target"
+selection_condition:  "-"
+date_ran:             "2024-01-01"
+additional_info:      ""
+
+# Libraries to decode against
+libraries:
+  - "L01"
+  - "L02"
+
+# -----------------------------------------------------------------------
+# DECODE SETTINGS — rarely change
+# -----------------------------------------------------------------------
+library_error_tolerance:  2
+min_library_overlap:      8
+revcomp:                  "YES"
+demultiplexer_algorithm:  "regex"
+demultiplexer_mode:       "single"
+realign:                  "NO"
+wiggle:                   "YES"
+
+# -----------------------------------------------------------------------
+# DELi SETUP — set once, do not change between runs
+# -----------------------------------------------------------------------
+
+# Path to DELi repository (used by setup.sh to install DELi into the venv)
+deli_dir: "/path/to/DELi"
+
+# DELi runtime parameters
+chunk_size: 1000000
+prefix:     ""
+debug:      false
+
+# Optional: path to a custom DELi config file
+# config_file: null

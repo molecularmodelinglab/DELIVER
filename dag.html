@@ -1,0 +1,137 @@
+<!--
+  ~ Copyright 2013-2024, Seqera Labs
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~     http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+<html>
+<head>
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1, maximum-scale=1">
+</head>
+<body>
+<pre class="mermaid" style="text-align: center;">
+%%{
+  init: {
+    'theme': 'base',
+    'themeVariables': {
+      'primaryColor': '#B6ECE2',
+      'primaryTextColor': '#160F26',
+      'primaryBorderColor': '#065647',
+      'lineColor': '#545555',
+      'clusterBkg': '#BABCBD22',
+      'clusterBorder': '#DDDEDE',
+      'fontFamily': 'arial'
+    }
+  }
+}%%
+flowchart TB
+    subgraph " "
+    v0["Channel.of"]
+    v23["deli_args"]
+    v27["deli_args"]
+    v30["deli_args"]
+    v32["deli_args"]
+    v36["deli_args"]
+    v40["deli_args"]
+    end
+    subgraph "PREPROCESS [PREPROCESS]"
+    v1(["CONCAT"])
+    v6(["FASTP_MERGE"])
+    v2(( ))
+    v4(( ))
+    end
+    subgraph " "
+    v7[" "]
+    v8[" "]
+    v25[" "]
+    v34["report"]
+    v42["summary"]
+    v45[" "]
+    end
+    subgraph "DELI [DELI]"
+    v10(["GenerateDecodeYaml"])
+    v12(["ExtractSequenceFiles"])
+    v24(["DecodeChunk"])
+    v28(["CollectDecodeChunks"])
+    v31(["MergeDecodeStatistics"])
+    v33(["WriteDecodeReport"])
+    v37(["CountChunk"])
+    v39(["CollectCountChunks"])
+    v41(["SummarizeDecodeRun"])
+    v11(( ))
+    v13(( ))
+    v18(( ))
+    v26(( ))
+    v29(( ))
+    v35(( ))
+    v38(( ))
+    end
+    subgraph "POSTPROCESS [POSTPROCESS]"
+    v43(["DEDUPLICATE"])
+    v44(["ENRICHMENT"])
+    end
+    v9(( ))
+    v0 --> v1
+    v1 --> v2
+    v1 --> v4
+    v2 --> v6
+    v4 --> v6
+    v6 --> v8
+    v6 --> v7
+    v6 --> v9
+    v9 --> v10
+    v10 --> v11
+    v11 --> v12
+    v12 --> v13
+    v12 --> v18
+    v23 --> v24
+    v11 --> v24
+    v13 --> v24
+    v18 --> v24
+    v24 --> v25
+    v24 --> v26
+    v24 --> v29
+    v27 --> v28
+    v13 --> v28
+    v26 --> v28
+    v28 --> v35
+    v30 --> v31
+    v11 --> v31
+    v13 --> v31
+    v29 --> v31
+    v31 --> v33
+    v31 --> v41
+    v32 --> v33
+    v11 --> v33
+    v13 --> v33
+    v33 --> v34
+    v36 --> v37
+    v13 --> v37
+    v35 --> v37
+    v37 --> v38
+    v13 --> v39
+    v38 --> v39
+    v39 --> v41
+    v39 --> v43
+    v40 --> v41
+    v13 --> v41
+    v41 --> v42
+    v43 --> v44
+    v44 --> v45
+
+</pre>
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, maxTextSize: Number.MAX_SAFE_INTEGER, maxEdges: Number.MAX_SAFE_INTEGER });
+</script>
+</body>
+</html>
