@@ -114,5 +114,9 @@ Resource settings (CPUs, memory, time) can be tuned in the `longleaf` profile in
 
 - **Python 3.12.4** — `module load python/3.12.4`
 - **Nextflow** — `module load nextflow`
-- **fastp/1.0.1** — `module load fastp/1.0.1` (loaded automatically by Nextflow on longleaf)
-- **DELi** — installed into `.venv` by `setup.sh`; decoding processes in `pipeline/subworkflows/deli.nf` are adapted from [DELi's Nextflow workflow](https://github.com/Popov-Lab-UNC/DELi)
+- **fastp/1.0.1[1]** — `module load fastp/1.0.1` (loaded automatically by Nextflow on longleaf)
+- **DELi[2]** — installed into `.venv` by `setup.sh`; decoding processes in `pipeline/subworkflows/deli.nf` are adapted from [DELi's Nextflow workflow](https://github.com/Popov-Lab-UNC/DELi)
+
+[1] Shifu Chen. 2025. fastp 1.0: An ultra-fast all-round tool for FASTQ data quality control and preprocessing. iMeta 2025: https://doi.org/10.1002/imt2.107
+
+[2]Wellnitz J, Novy B, Maxfield T, Lin S-H, Zhilinskaya I, Axtman M, Leisner T, Merten E, Norris-Drouin JL, Hardy BP, Pearce KH, Popov KI. (2025). *Open-Source DNA-Encoded Library informatics Package for Design, Decoding, and Analysis: DELi*. bioRxiv. https://doi.org/10.1101/2025.02.25.640184
