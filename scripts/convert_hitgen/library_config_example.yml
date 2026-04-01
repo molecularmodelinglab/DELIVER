@@ -1,0 +1,24 @@
+# Library conversion config — copy to library_config.yml and fill in your values.
+# library_config.yml is gitignored and will not be committed.
+
+# DNA sequence of primer 1 (static, before building blocks)
+primer1_tag: "AAAAAAAAAAA"
+primer1_overhang: ""
+
+# DNA sequence of primer 2 (static, after UMI)
+primer2_tag: "CCCCCCCCCCCC"
+
+# Overhangs separating each BB cycle (one per cycle, in order)
+bb_overhangs:
+  - "AA"
+  - "CC"
+  - "GG"
+
+# Length of each building block barcode (number of N bases)
+bb_length: 11
+
+# Length of the UMI barcode (number of N bases)
+umi_length: 12
+
+# Error correction mode for building block barcodes
+error_correction: "levenshtein_dist:1,asymmetrical"

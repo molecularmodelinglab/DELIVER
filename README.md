@@ -73,7 +73,7 @@ DELIVER/
 ├── setup.sh                          # one-time setup: creates .venv, installs DELi
 ├── submit.slurm                      # SLURM launcher
 ├── pipeline/
-│   ├── main.nf                       # entry points: FULL, FROM_FASTQ, FROM_COUNTS
+│   ├── main.nf                       # auto-detects mode from params
 │   ├── nextflow.config               # longleaf / local profiles
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
@@ -84,8 +84,22 @@ DELIVER/
 │       └── postprocess/              # standalone Click CLI scripts called by NF
 │           ├── deduplicate.py        # deduplication + aggregation (TODO)
 │           └── enrichment.py         # enrichment scoring (TODO)
-└── scripts/                          # one-shot developer utilities
+└── scripts/
+    └── convert_hitgen/               # Hitgen TSV → DELi format converter
 ```
+
+## Vendor data preparation
+
+Before running the pipeline you need DELi-format library definitions. If your libraries come from **Hitgen**, use the conversion script:
+
+```bash
+sbatch scripts/convert_hitgen/convert_hitgen.slurm \
+  --input-dir  /path/to/hitgen/tsv_files \
+  --output-dir /path/to/deli_data \
+  --config     scripts/convert_hitgen/library_config.yml
+```
+
+This creates `libraries/` and `building_blocks/` inside `--output-dir`, which you then point `deli_data_dir` at in `params.yml`. See [scripts/convert_hitgen/README.md](scripts/convert_hitgen/README.md) for setup and input format details.
 
 ## Pipeline stages
 

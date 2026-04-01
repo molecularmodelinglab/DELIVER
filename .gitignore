@@ -1,6 +1,11 @@
 # Local parameter files with real paths — do not commit
 params_*.yml
 
+# Library conversion config with real paths — do not commit
+scripts/convert_hitgen/library_config.yml
+scripts/convert_hitgen/.venv/
+scripts/convert_hitgen/test_output/
+
 
 # Nextflow working directories and logs
 work/
