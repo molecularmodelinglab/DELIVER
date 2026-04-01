@@ -11,7 +11,7 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing on Longleaf HPC.
 bash setup.sh
 ```
 
-Edit `params.yml`, then submit:
+Edit `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
 
 ```bash
 sbatch submit.slurm \
@@ -139,9 +139,13 @@ Defaults work for most cases. See [DELi docs](https://github.com/Popov-Lab-UNC/D
 | `wiggle` | `YES` | Allow 1-base wiggle when locating barcode sections |
 | `chunk_size` | `1000000` | Reads per FASTQ chunk (controls parallelism) |
 
+## How the pipeline runs on Longleaf
+
+`submit.slurm` launches a single lightweight SLURM job (8 GB, 1 CPU) that runs Nextflow as a coordinator. Nextflow then submits each pipeline process as its own separate SLURM job. The resource requirements for each process (CPUs, memory, time) are defined in the `longleaf` profile in `pipeline/nextflow.config` — not in `submit.slurm`.
+
 ## Tuning resources
 
-Resource settings (CPUs, memory, time) can be tuned in the `longleaf` profile in `pipeline/nextflow.config`.
+Per-process resource settings can be adjusted in the `longleaf` profile in `pipeline/nextflow.config`.
 
 ## Dependencies
 
