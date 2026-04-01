@@ -15,7 +15,6 @@ Edit `params.yml` (see [parameter reference](#paramsyml) below), then submit. Ea
 
 ```bash
 sbatch submit.slurm \
-  --deliver-dir /path/to/DELIVER \
   --work-dir    /path/to/work \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs
@@ -50,7 +49,6 @@ Add `--resume` to resume after failure:
 
 ```bash
 sbatch submit.slurm \
-  --deliver-dir /path/to/DELIVER \
   --work-dir    /path/to/work \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs \

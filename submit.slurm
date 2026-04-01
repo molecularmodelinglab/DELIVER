@@ -8,31 +8,29 @@
 #SBATCH --time=24:00:00
 
 # Usage:
-#   sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR [--resume]
+#   sbatch submit.slurm --work-dir DIR --params-file FILE --log-dir DIR [--resume]
 #
-#   --deliver-dir   path to this repository
 #   --work-dir      Nextflow work directory (intermediate files)
 #   --params-file   path to params.yml
 #   --log-dir       directory for launcher logs
 #   --resume        resume after failure
 #
 # The pipeline detects the run mode from params.yml automatically:
-#   read_1 set → FASTQ input (preprocess → DELi → postprocess)
-#   counts_file set   → counts.parquet input (postprocess only)
+#   read_1 set      → FASTQ input (preprocess → DELi → postprocess)
+#   counts_file set → counts.parquet input (postprocess only)
 #
 # Example:
 #   sbatch submit.slurm \
-#     --deliver-dir /path/to/DELIVER \
 #     --work-dir    /path/to/work \
 #     --params-file /path/to/DELIVER/params.yml \
 #     --log-dir     /path/to/logs \
 #     --resume
 
+DELIVER_DIR="${SLURM_SUBMIT_DIR}"
 RESUME=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --deliver-dir)  DELIVER_DIR="$2"; shift 2 ;;
         --work-dir)     WORK_DIR="$2";    shift 2 ;;
         --params-file)  PARAMS_FILE="$2"; shift 2 ;;
         --log-dir)      LOG_DIR="$2";     shift 2 ;;
@@ -41,8 +39,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ -z "$DELIVER_DIR" ] || [ -z "$WORK_DIR" ] || [ -z "$PARAMS_FILE" ] || [ -z "$LOG_DIR" ]; then
-    echo "Usage: sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR [--resume]"
+if [ -z "$WORK_DIR" ] || [ -z "$PARAMS_FILE" ] || [ -z "$LOG_DIR" ]; then
+    echo "Usage: sbatch submit.slurm --work-dir DIR --params-file FILE --log-dir DIR [--resume]"
     exit 1
 fi
 
