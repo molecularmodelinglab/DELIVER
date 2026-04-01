@@ -3,7 +3,7 @@ nextflow.enable.dsl = 2
 // Preprocessing subworkflow.
 // Steps:
 //   1. Concatenate lanes (multiple R1 / R2 files) — files stay compressed if they were .gz
-//   2. If paired-end (reverse_reads provided): fastp merges R1+R2 (reads .gz natively) → merged.fastq
+//   2. If paired-end (read_2 provided): fastp merges R1+R2 (reads .gz natively) → merged.fastq
 //   3. If single-end: decompress the concatenated file if needed → R1.fastq
 //
 // Only the final merged/decompressed FASTQ is published. Intermediate files are not saved.
@@ -109,14 +109,14 @@ process FASTP_MERGE {
 // ---------------------------------------------------------------------------
 workflow PREPROCESS {
     main:
-    r1_files = params.forward_reads instanceof List
-        ? params.forward_reads.collect { file(it) }
-        : [file(params.forward_reads)]
+    r1_files = params.read_1 instanceof List
+        ? params.read_1.collect { file(it) }
+        : [file(params.read_1)]
 
-    if (params.reverse_reads) {
-        r2_files = params.reverse_reads instanceof List
-            ? params.reverse_reads.collect { file(it) }
-            : [file(params.reverse_reads)]
+    if (params.read_2) {
+        r2_files = params.read_2 instanceof List
+            ? params.read_2.collect { file(it) }
+            : [file(params.read_2)]
 
         // R1 and R2 concatenated via one channel — avoids DSL2 duplicate-process error
         reads_ch = Channel.of(["R1", r1_files], ["R2", r2_files])

@@ -17,7 +17,7 @@
 #   --resume        resume after failure
 #
 # The pipeline detects the run mode from params.yml automatically:
-#   forward_reads set → FASTQ input (preprocess → DELi → postprocess)
+#   read_1 set → FASTQ input (preprocess → DELi → postprocess)
 #   counts_file set   → counts.parquet input (postprocess only)
 #
 # Example:

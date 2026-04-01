@@ -40,7 +40,7 @@ PARAMS_FILE="${STUB_DIR}/params_stub.yml"
 
 if [[ "${MODE}" == "fastq" ]]; then
     cat > "${PARAMS_FILE}" <<EOF
-forward_reads:
+read_1:
   - "${STUB_FASTQ}"
 counts_file: null
 out_dir: "${OUT_DIR}"
@@ -67,7 +67,7 @@ fastp_threads: 4
 EOF
 else
     cat > "${PARAMS_FILE}" <<EOF
-forward_reads: null
+read_1: null
 counts_file: "${STUB_COUNTS}"
 out_dir: "${OUT_DIR}"
 deli_data_dir: "${STUB_DIR}"

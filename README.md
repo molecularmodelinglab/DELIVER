@@ -41,7 +41,7 @@ The pipeline detects the mode automatically from `params.yml`:
 
 | `params.yml` | What runs |
 |--------------|-----------|
-| `forward_reads` set | FASTQ → preprocess → DELi → postprocessing |
+| `read_1` set | FASTQ → preprocess → DELi → postprocessing |
 | `counts_file` set | counts.parquet → postprocessing only |
 | both set | error |
 | neither set | error |
@@ -102,7 +102,7 @@ DELIVER/
 
 The only file you need to edit. Key sections:
 
-- **INPUT** — `forward_reads`, `reverse_reads`, `out_dir`, `counts_file`, `deli_data_dir`
+- **INPUT** — `read_1`, `read_2`, `out_dir`, `counts_file`, `deli_data_dir`
 - **SELECTION METADATA** — `selection_id`, `target_id`, `date_ran`, etc. (written into decode.yaml)
 - **LIBRARIES** — list of library IDs to decode against
 - **DECODE SETTINGS** — rarely need changing

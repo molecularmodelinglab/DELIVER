@@ -2,7 +2,7 @@
 # This is the only file you need to edit before running the pipeline.
 #
 # The pipeline detects the run mode automatically:
-#   forward_reads set → FASTQ input (preprocess → DELi → postprocessing)
+#   read_1 set → FASTQ input (preprocess → DELi → postprocessing)
 #   counts_file set   → counts.parquet input (postprocessing only)
 #
 # Usage:
@@ -14,19 +14,19 @@
 # -----------------------------------------------------------------------
 
 # FASTQ input files
-# forward_reads: R1 files (one or more lanes) — may be .fastq or .fastq.gz
-# reverse_reads: R2 files for paired-end; leave empty or remove for single-end
-forward_reads:
+# read_1: R1 files (one or more lanes) — may be .fastq or .fastq.gz
+# read_2: R2 files for paired-end; leave empty or remove for single-end
+read_1:
   - "/path/to/sample_L001_R1.fastq.gz"
   - "/path/to/sample_L002_R1.fastq.gz"
-reverse_reads:
+read_2:
   - "/path/to/sample_L001_R2.fastq.gz"
   - "/path/to/sample_L002_R2.fastq.gz"
 
 # Output directory for results
 out_dir: "/path/to/results"
 
-# Counts parquet file — set this instead of forward_reads to skip decoding
+# Counts parquet file — set this instead of read_1 to skip decoding
 counts_file: null
 
 # DELi data directory (libraries, building blocks, etc.)
