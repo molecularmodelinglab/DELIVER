@@ -100,13 +100,44 @@ DELIVER/
 
 ## params.yml
 
-The only file you need to edit. Key sections:
+The only file you need to edit. All parameters are documented inline in `params.yml`. Key sections:
 
-- **INPUT** — `read_1`, `read_2`, `out_dir`, `counts_file`, `deli_data_dir`
-- **SELECTION METADATA** — `selection_id`, `target_id`, `date_ran`, etc. (written into decode.yaml)
-- **LIBRARIES** — list of library IDs to decode against
-- **DECODE SETTINGS** — rarely need changing
-- **DELi SETUP** — `deli_dir` (set once after cloning)
+### Input
+
+| Parameter | Description |
+|-----------|-------------|
+| `read_1` | Read 1 sequencing file(s) — one or more lanes, `.fastq` or `.fastq.gz` |
+| `read_2` | Read 2 sequencing file(s) — paired-end only; omit for single-end |
+| `counts_file` | Pre-computed `counts.parquet` — set instead of `read_1` to skip decoding |
+| `out_dir` | Directory where all results will be written |
+| `deli_data_dir` | Path to DELi data directory (library definitions, building blocks) |
+
+### Selection metadata
+
+Written into the generated `decode.yaml` and used to name output files.
+
+| Parameter | Description |
+|-----------|-------------|
+| `selection_id` | Short identifier for this selection (used as output file prefix) |
+| `target_id` | Target protein name |
+| `selection_condition` | Free-text description of selection conditions |
+| `date_ran` | Date the selection was run (`YYYY-MM-DD`) |
+| `libraries` | List of library IDs to decode against (must exist in `deli_data_dir`) |
+
+### Decode settings
+
+Defaults work for most cases. See [DELi docs](https://github.com/Popov-Lab-UNC/DELi) for details.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `library_error_tolerance` | `2` | Max mismatches when matching a library barcode |
+| `min_library_overlap` | `8` | Min bases overlapping between read and barcode |
+| `revcomp` | `YES` | Reverse-complement reads before decoding |
+| `demultiplexer_algorithm` | `regex` | Barcode finding algorithm (`regex` or `cutadapt`) |
+| `demultiplexer_mode` | `single` | `single` — one library per read; `library` — split by library tag |
+| `realign` | `NO` | Realign reads after initial barcode calling |
+| `wiggle` | `YES` | Allow 1-base wiggle when locating barcode sections |
+| `chunk_size` | `1000000` | Reads per FASTQ chunk (controls parallelism) |
 
 ## Tuning resources
 

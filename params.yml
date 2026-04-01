@@ -13,9 +13,9 @@
 # INPUT — change for every run
 # -----------------------------------------------------------------------
 
-# FASTQ input files
-# read_1: R1 files (one or more lanes) — may be .fastq or .fastq.gz
-# read_2: R2 files for paired-end; leave empty or remove for single-end
+# read_1: sequencing file(s) for read 1 (one or more lanes, .fastq or .fastq.gz)
+# read_2: sequencing file(s) for read 2 — paired-end only; omit or set null for single-end
+#         Set read_1/read_2 OR counts_file, not both.
 read_1:
   - "/path/to/sample_L001_R1.fastq.gz"
   - "/path/to/sample_L002_R1.fastq.gz"
@@ -23,51 +23,84 @@ read_2:
   - "/path/to/sample_L001_R2.fastq.gz"
   - "/path/to/sample_L002_R2.fastq.gz"
 
-# Output directory for results
+# out_dir: directory where all results will be written
 out_dir: "/path/to/results"
 
-# Counts parquet file — set this instead of read_1 to skip decoding
+# counts_file: path to a pre-computed counts.parquet — skips decoding entirely,
+#              runs postprocessing only. Set instead of read_1/read_2.
 counts_file: null
 
-# DELi data directory (libraries, building blocks, etc.)
+# deli_data_dir: path to the DELi data directory containing library definitions,
+#                building block tables, etc. (see DELi docs for structure)
 deli_data_dir: "/path/to/deli_data"
 
 # -----------------------------------------------------------------------
-# SELECTION METADATA — used to generate decode.yaml and name output files
+# SELECTION METADATA — written into the generated decode.yaml and used to
+# name output files. Fill in for every run.
 # -----------------------------------------------------------------------
-selection_id:         "my_selection"
-target_id:            "my_target"
-selection_condition:  "-"
-date_ran:             "2024-01-01"
-additional_info:      ""
 
-# Libraries to decode against
+# selection_id: short identifier for this selection experiment
+#               (used as prefix for all output files)
+selection_id: "my_selection"
+
+# target_id: name of the target protein
+target_id: "my_target"
+
+# selection_condition: free-text description of selection conditions (e.g. "10nM", "-")
+selection_condition: "-"
+
+# date_ran: date the selection was run (YYYY-MM-DD)
+date_ran: "2024-01-01"
+
+# additional_info: any extra notes to store in the decode.yaml
+additional_info: ""
+
+# libraries: list of library IDs to decode against.
+#            Must match library names in deli_data_dir.
 libraries:
   - "L01"
   - "L02"
 
 # -----------------------------------------------------------------------
-# DECODE SETTINGS — rarely change
-# -----------------------------------------------------------------------
-library_error_tolerance:  2
-min_library_overlap:      8
-revcomp:                  "YES"
-demultiplexer_algorithm:  "regex"
-demultiplexer_mode:       "single"
-realign:                  "NO"
-wiggle:                   "YES"
-
-# -----------------------------------------------------------------------
-# DELi SETUP — set once, do not change between runs
+# DECODE SETTINGS — defaults work for most cases; change only if needed
 # -----------------------------------------------------------------------
 
-# Path to DELi repository (used by setup.sh to install DELi into the venv)
+# library_error_tolerance: max number of mismatches allowed when matching a library barcode
+library_error_tolerance: 2
+
+# min_library_overlap: minimum number of bases that must overlap between read and barcode
+min_library_overlap: 8
+
+# revcomp: whether to reverse-complement reads before decoding ("YES" / "NO")
+revcomp: "YES"
+
+# demultiplexer_algorithm: algorithm used to find barcode sections ("regex" or "cutadapt")
+demultiplexer_algorithm: "regex"
+
+# demultiplexer_mode: "single" (one library per read) or "library" (split by library tag)
+demultiplexer_mode: "single"
+
+# realign: whether to realign reads after initial barcode calling ("YES" / "NO")
+realign: "NO"
+
+# wiggle: allow 1-base wiggle room when locating barcode sections ("YES" / "NO")
+wiggle: "YES"
+
+# -----------------------------------------------------------------------
+# DELi SETUP — set once after cloning, do not change between runs
+# -----------------------------------------------------------------------
+
+# deli_dir: path to the DELi repository — used by setup.sh to install DELi into .venv
 deli_dir: "/path/to/DELi"
 
-# DELi runtime parameters
+# chunk_size: number of reads per FASTQ chunk sent to each decode job
 chunk_size: 1000000
-prefix:     ""
-debug:      false
 
-# Optional: path to a custom DELi config file
+# prefix: output file prefix — defaults to selection_id if empty
+prefix: ""
+
+# debug: enable DELi debug logging
+debug: false
+
+# config_file: optional path to a custom DELi config file
 # config_file: null
