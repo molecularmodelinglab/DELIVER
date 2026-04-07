@@ -1,10 +1,10 @@
 # DELIVER
 
-Nextflow pipeline for DEL (DNA Encoded Library) data processing on Longleaf HPC.
+Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 
 **We are using the "patch" branch of DELi as of now:** https://github.com/Popov-Lab-UNC/DELi/tree/patch
 
-## Quick start
+## Quick start — Longleaf HPC
 
 ```bash
 # One-time setup on login node
@@ -19,6 +19,24 @@ sbatch submit.slurm \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs
 ```
+
+## Quick start — local Mac
+
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Nextflow](https://www.nextflow.io/docs/latest/install.html).
+
+```bash
+# One-time setup: creates .venv with Python 3.13 and installs DELi
+bash setup_local.sh
+```
+
+Create `params_local.yml` (gitignored) with your local paths — use `params.yml` as a template. Then:
+
+```bash
+bash run_local.sh           # fresh run
+bash run_local.sh --resume  # resume after failure
+```
+
+Results go to the `out_dir` set in `params_local.yml`.
 
 ## Visualize the workflow
 
@@ -69,9 +87,11 @@ Python unit tests for postprocessing scripts are in `tests/`. They will grow as 
 
 ```
 DELIVER/
-├── params.yml                        # the only file users need to edit
-├── setup.sh                          # one-time setup: creates .venv, installs DELi
-├── submit.slurm                      # SLURM launcher
+├── params.yml                        # template — copy to params_local.yml for local runs
+├── setup.sh                          # one-time setup for Longleaf: creates .venv, installs DELi
+├── setup_local.sh                    # one-time setup for local Mac (uses uv + Python 3.13)
+├── submit.slurm                      # SLURM launcher for Longleaf
+├── run_local.sh                      # run script for local Mac
 ├── pipeline/
 │   ├── main.nf                       # auto-detects mode from params
 │   ├── nextflow.config               # longleaf / local profiles
@@ -161,10 +181,17 @@ Per-process resource settings can be adjusted in the `longleaf` profile in `pipe
 
 ## Dependencies
 
+**Longleaf:**
 - **Python 3.12.4** — `module load python/3.12.4`
 - **Nextflow** — `module load nextflow`
-- **fastp/1.0.1[1]** — `module load fastp/1.0.1` (loaded automatically by Nextflow on longleaf)
+- **fastp/1.0.1[1]** — `module load fastp/1.0.1` (loaded automatically by Nextflow on Longleaf)
 - **DELi[2]** — installed into `.venv` by `setup.sh`; decoding processes in `pipeline/subworkflows/deli.nf` are adapted from [DELi's Nextflow workflow](https://github.com/Popov-Lab-UNC/DELi)
+
+**Local Mac:**
+- **Python 3.13** — required by DELi; managed automatically via `uv` in `setup_local.sh`
+- **uv** — https://docs.astral.sh/uv/getting-started/installation/
+- **Nextflow** — https://www.nextflow.io/docs/latest/install.html
+- **fastp** — only needed for paired-end runs (`read_2` set); install via `brew install fastp`
 
 [1] Shifu Chen. 2025. fastp 1.0: An ultra-fast all-round tool for FASTQ data quality control and preprocessing. iMeta 2025: https://doi.org/10.1002/imt2.107
 
