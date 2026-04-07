@@ -23,6 +23,8 @@ sbatch submit.slurm \
 ## Quick start — local Mac
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Nextflow](https://www.nextflow.io/docs/latest/install.html).
+Requires DELi (patch branch)
+Requires fastp.
 
 ```bash
 # One-time setup: creates .venv with Python 3.13 and installs DELi
@@ -192,6 +194,7 @@ Per-process resource settings can be adjusted in the `longleaf` profile in `pipe
 - **uv** — https://docs.astral.sh/uv/getting-started/installation/
 - **Nextflow** — https://www.nextflow.io/docs/latest/install.html
 - **fastp** — only needed for paired-end runs (`read_2` set); install via `brew install fastp`
+- - **DELi[2]**
 
 [1] Shifu Chen. 2025. fastp 1.0: An ultra-fast all-round tool for FASTQ data quality control and preprocessing. iMeta 2025: https://doi.org/10.1002/imt2.107
 
