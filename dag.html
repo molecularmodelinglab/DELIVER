@@ -36,97 +36,93 @@
 flowchart TB
     subgraph " "
     v0["Channel.of"]
-    v23["deli_args"]
+    v18["deli_args"]
+    v22["deli_args"]
+    v25["deli_args"]
     v27["deli_args"]
-    v30["deli_args"]
-    v32["deli_args"]
-    v36["deli_args"]
-    v40["deli_args"]
+    v31["deli_args"]
+    v35["deli_args"]
     end
     subgraph "PREPROCESS [PREPROCESS]"
     v1(["CONCAT"])
-    v6(["FASTP_MERGE"])
+    v3(["DECOMPRESS"])
     v2(( ))
-    v4(( ))
-    end
-    subgraph " "
-    v7[" "]
-    v8[" "]
-    v25[" "]
-    v34["report"]
-    v42["summary"]
-    v45[" "]
     end
     subgraph "DELI [DELI]"
-    v10(["GenerateDecodeYaml"])
-    v12(["ExtractSequenceFiles"])
-    v24(["DecodeChunk"])
-    v28(["CollectDecodeChunks"])
-    v31(["MergeDecodeStatistics"])
-    v33(["WriteDecodeReport"])
-    v37(["CountChunk"])
-    v39(["CollectCountChunks"])
-    v41(["SummarizeDecodeRun"])
-    v11(( ))
+    v5(["GenerateDecodeYaml"])
+    v7(["ExtractSequenceFiles"])
+    v19(["DecodeChunk"])
+    v23(["CollectDecodeChunks"])
+    v26(["MergeDecodeStatistics"])
+    v28(["WriteDecodeReport"])
+    v32(["CountChunk"])
+    v34(["CollectCountChunks"])
+    v36(["SummarizeDecodeRun"])
+    v6(( ))
+    v8(( ))
     v13(( ))
-    v18(( ))
-    v26(( ))
-    v29(( ))
-    v35(( ))
-    v38(( ))
+    v21(( ))
+    v24(( ))
+    v30(( ))
+    v33(( ))
+    end
+    subgraph " "
+    v20[" "]
+    v29["report"]
+    v37["summary"]
+    v39[" "]
+    v42[" "]
     end
     subgraph "POSTPROCESS [POSTPROCESS]"
-    v43(["DEDUPLICATE"])
-    v44(["ENRICHMENT"])
+    v38(["BUILD_LIBRARY_DICT"])
+    v40(["DEDUPLICATE"])
+    v41(["ENRICHMENT"])
     end
-    v9(( ))
+    v4(( ))
     v0 --> v1
     v1 --> v2
-    v1 --> v4
-    v2 --> v6
-    v4 --> v6
-    v6 --> v8
+    v2 --> v3
+    v3 --> v4
+    v4 --> v5
+    v5 --> v6
     v6 --> v7
-    v6 --> v9
-    v9 --> v10
-    v10 --> v11
-    v11 --> v12
-    v12 --> v13
-    v12 --> v18
-    v23 --> v24
-    v11 --> v24
-    v13 --> v24
-    v18 --> v24
-    v24 --> v25
+    v7 --> v8
+    v7 --> v13
+    v18 --> v19
+    v6 --> v19
+    v8 --> v19
+    v13 --> v19
+    v19 --> v20
+    v19 --> v21
+    v19 --> v24
+    v22 --> v23
+    v8 --> v23
+    v21 --> v23
+    v23 --> v30
+    v25 --> v26
+    v6 --> v26
+    v8 --> v26
     v24 --> v26
-    v24 --> v29
-    v27 --> v28
-    v13 --> v28
     v26 --> v28
-    v28 --> v35
-    v30 --> v31
-    v11 --> v31
-    v13 --> v31
-    v29 --> v31
-    v31 --> v33
-    v31 --> v41
+    v26 --> v36
+    v27 --> v28
+    v6 --> v28
+    v8 --> v28
+    v28 --> v29
+    v31 --> v32
+    v8 --> v32
+    v30 --> v32
     v32 --> v33
-    v11 --> v33
-    v13 --> v33
+    v8 --> v34
     v33 --> v34
+    v34 --> v36
+    v34 --> v40
+    v35 --> v36
+    v8 --> v36
     v36 --> v37
-    v13 --> v37
-    v35 --> v37
-    v37 --> v38
-    v13 --> v39
     v38 --> v39
-    v39 --> v41
-    v39 --> v43
     v40 --> v41
-    v13 --> v41
     v41 --> v42
-    v43 --> v44
-    v44 --> v45
 
 </pre>
 <script type="module">

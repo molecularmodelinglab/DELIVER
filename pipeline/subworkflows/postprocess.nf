@@ -29,6 +29,25 @@ nextflow.enable.dsl = 2
 // Removes duplicate compounds from DELi counts
 // Calls Python script: src/deliver/postprocess/deduplicate.py
 
+process BUILD_LIBRARY_DICT {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    output:
+    path "library_dict.json"
+
+    script:
+    """
+    python ${projectDir}/../src/deliver/postprocess/build_library_dict.py \
+        --deli-data-dir '${params.deli_data_dir}' \
+        --output library_dict.json
+    """
+
+    stub:
+    """
+    touch library_dict.json
+    """
+}
+
 process DEDUPLICATE {
     tag "deduplicate"
     publishDir "${params.out_dir}", mode: 'copy'
@@ -147,6 +166,7 @@ workflow POSTPROCESS {
     // Path channel: merged counts parquet from DELI (or pre-existing)
 
     main:
+    BUILD_LIBRARY_DICT()
 
     log.info """
     ========================================
@@ -163,5 +183,6 @@ workflow POSTPROCESS {
     ENRICHMENT(DEDUPLICATE.out.dedup)
 
     emit:
-    results = ENRICHMENT.out.enrichment
+    results      = ENRICHMENT.out.enrichment
+    library_dict = BUILD_LIBRARY_DICT.out
 }

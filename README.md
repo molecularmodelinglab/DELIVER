@@ -206,10 +206,11 @@ DELIVER/
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
 │       ├── deli.nf                   # DELi processes + DELI workflow
-│       └── postprocess.nf            # DEDUPLICATE + ENRICHMENT workflows
+│       └── postprocess.nf            # BUILD_LIBRARY_DICT + DEDUPLICATE + ENRICHMENT workflows
 ├── src/
 │   └── deliver/
 │       └── postprocess/              # standalone Click CLI scripts called by NF
+│           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── deduplicate.py        # deduplication + aggregation (TODO)
 │           └── enrichment.py         # enrichment scoring (TODO)
 └── scripts/
@@ -235,6 +236,7 @@ This creates `libraries/` and `building_blocks/` inside `--output-dir`, which yo
 |-------|--------|
 | Preprocessing: concat lanes, merge paired-end reads (fastp) | implemented |
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
+| Build library dictionary (library_dict.json) | implemented |
 | Deduplication + aggregation | stub (TODO) |
 | Enrichment scoring | stub (TODO) |
 
