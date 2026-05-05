@@ -22,7 +22,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -40,6 +40,73 @@ RE_SEFF_MEM_USE = re.compile(r"Memory Utilized:\s+(.+)")
 RE_SEFF_MEM_EFF = re.compile(r"Memory Efficiency:\s+(\S+)")
 RE_SEFF_CORES   = re.compile(r"Cores per node:\s+(\d+)")
 RE_SEFF_MEM_REQ = re.compile(r"Memory Efficiency:.*of\s+([\d.]+\s*\S+)")
+
+
+# ── Pipeline timing ──────────────────────────────────────────────────────────
+
+RE_LOG_TS     = re.compile(r"^(\w{3}-\d{2} \d{2}:\d{2}:\d{2})\.")
+RE_SUBMIT_LOG = re.compile(r"^(\w{3}-\d{2} \d{2}:\d{2}:\d{2})\..*submitted process .+jobId: (\d+)")
+
+
+def parse_pipeline_times(
+    log_path: str, jobs: list[dict]
+) -> tuple[datetime | None, datetime | None, float | None]:
+    """
+    Return (start_utc, end_utc, total_minutes).
+
+    start_utc  — first line of the log converted to UTC
+                 (UTC offset inferred from epoch-ms of the first submitted job)
+    end_utc    — max exited timestamp across all completed jobs
+    """
+    first_log_str    = None   # "Apr-07 11:43:26"
+    first_submit_str = None   # same format, time of first SLURM submission
+    first_job_id     = None
+
+    with open(log_path) as f:
+        for line in f:
+            if first_log_str is None:
+                m = RE_LOG_TS.match(line)
+                if m:
+                    first_log_str = m.group(1)
+            if first_submit_str is None:
+                m = RE_SUBMIT_LOG.match(line)
+                if m:
+                    first_submit_str = m.group(1)
+                    first_job_id     = m.group(2)
+            if first_log_str and first_submit_str:
+                break
+
+    end_dt = max((j["exited"] for j in jobs if "exited" in j), default=None)
+    if not end_dt or not first_log_str or not first_submit_str:
+        return None, end_dt, None
+
+    year = end_dt.year
+
+    # Infer UTC offset (whole hours) from the first submitted job's epoch-ms.
+    # Parse the submission log timestamp as if it were UTC ("pseudo-UTC"),
+    # compare to the job's actual started time (true UTC), round to nearest hour.
+    job_lookup = {j["job_id"]: j for j in jobs}
+    utc_offset_h = None
+    if first_job_id and first_job_id in job_lookup:
+        j = job_lookup[first_job_id]
+        if "started" in j:
+            pseudo_utc = datetime.strptime(
+                f"{year}-{first_submit_str}", "%Y-%b-%d %H:%M:%S"
+            ).replace(tzinfo=timezone.utc)
+            diff_h = (j["started"] - pseudo_utc).total_seconds() / 3600
+            utc_offset_h = round(diff_h)   # e.g. 4 for EDT (UTC = local + 4h)
+
+    if utc_offset_h is None:
+        return None, end_dt, None
+
+    first_log_naive = datetime.strptime(
+        f"{year}-{first_log_str}", "%Y-%b-%d %H:%M:%S"
+    )
+    # Convert local → UTC:  UTC = local + utc_offset_h
+    start_dt = first_log_naive.replace(tzinfo=timezone.utc) + timedelta(hours=utc_offset_h)
+
+    total_min = round((end_dt - start_dt).total_seconds() / 60, 1)
+    return start_dt, end_dt, total_min
 
 
 # ── Log parsing ───────────────────────────────────────────────────────────────
@@ -284,6 +351,78 @@ def save_csv(path: str, headers: list[str], rows: list[list[str]]) -> None:
     print(f"Saved: {path}", file=sys.stderr)
 
 
+def _md_table(headers: list[str], rows: list[list[str]]) -> str:
+    """Render a GitHub-flavoured markdown table."""
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+
+    def fmt_row(cells):
+        return "| " + " | ".join(str(c).ljust(widths[i]) for i, c in enumerate(cells)) + " |"
+
+    sep = "| " + " | ".join("-" * widths[i] for i in range(len(headers))) + " |"
+    lines = [fmt_row(headers), sep] + [fmt_row(r) for r in rows]
+    return "\n".join(lines)
+
+
+def save_report(
+    path: str,
+    log_path: str,
+    start_dt: datetime | None,
+    end_dt: datetime | None,
+    total_min: float | None,
+    total: int,
+    completed: int,
+    failed: int,
+    sum_headers: list[str],
+    sum_rows: list[list[str]],
+    job_headers: list[str],
+    job_rows: list[list[str]],
+) -> None:
+    now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines = []
+
+    lines.append("# DELIVER Pipeline Run Report")
+    lines.append("")
+    lines.append(f"Generated : {now}")
+    lines.append(f"Log       : {log_path}")
+    lines.append("")
+
+    # Timing
+    lines.append("## Pipeline Timing")
+    lines.append("")
+    if start_dt and end_dt and total_min is not None:
+        h, m = divmod(int(total_min), 60)
+        lines.append(f"Start : {start_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        lines.append(f"End   : {end_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        lines.append(f"Total : {h}h {m:02d}m  ({total_min} min)")
+    else:
+        lines.append("_Timing unavailable — log may be incomplete._")
+    lines.append("")
+
+    # Job counts
+    lines.append("## Job Counts")
+    lines.append("")
+    lines.append(f"Total: {total}  |  Completed: {completed}  |  Failed: {failed}  |  Pending/unknown: {total - completed - failed}")
+    lines.append("")
+
+    # Summary
+    lines.append("## Summary by Process Type")
+    lines.append("")
+    lines.append(_md_table(sum_headers, sum_rows))
+    lines.append("")
+
+    # Per-job detail
+    lines.append("## Per-Job Detail")
+    lines.append("")
+    lines.append(_md_table(job_headers, job_rows))
+    lines.append("")
+
+    Path(path).write_text("\n".join(lines))
+    print(f"Saved: {path}", file=sys.stderr)
+
+
 # ── Per-job table ─────────────────────────────────────────────────────────────
 
 def build_job_rows(jobs: list[dict], seff_data: dict) -> tuple[list[str], list[list[str]]]:
@@ -325,10 +464,14 @@ def build_summary_rows(
     config: dict,
 ) -> tuple[list[str], list[list[str]]]:
 
-    # Group jobs by base process name
+    # Group jobs by base process name, preserving first-submission order
     groups: dict[str, list] = defaultdict(list)
+    proc_order: list[str] = []
     for j in jobs:
-        groups[base_name(j["process"])].append(j)
+        bn = base_name(j["process"])
+        if bn not in groups:
+            proc_order.append(bn)
+        groups[bn].append(j)
 
     has_seff   = bool(seff_data)
     has_config = bool(config)
@@ -347,7 +490,7 @@ def build_summary_rows(
         headers += ["req_cpus", "req_memory", "req_time"]
 
     rows = []
-    for proc_name in sorted(groups):
+    for proc_name in proc_order:
         grp = groups[proc_name]
         row = [proc_name, str(len(grp))]
 
@@ -411,6 +554,10 @@ def main():
         "--output", default=None,
         help="Save per-job table to this CSV file (e.g. jobs.csv)"
     )
+    parser.add_argument(
+        "--report", default=None,
+        help="Save a markdown report to this file (e.g. report.md)"
+    )
     args = parser.parse_args()
 
     jobs = parse_log(args.log)
@@ -438,6 +585,15 @@ def main():
         except Exception as e:
             print(f"Warning: could not parse config: {e}", file=sys.stderr)
 
+    # Pipeline timing header
+    start_dt, end_dt, total_min = parse_pipeline_times(args.log, jobs)
+    if start_dt and end_dt and total_min is not None:
+        h, m = divmod(int(total_min), 60)
+        print(f"Pipeline start : {start_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        print(f"Pipeline end   : {end_dt.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+        print(f"Total wall time: {h}h {m:02d}m  ({total_min} min)")
+        print()
+
     # Per-job table
     job_headers, job_rows = build_job_rows(jobs, seff_data)
     print_table(job_headers, job_rows)
@@ -463,6 +619,22 @@ def main():
         stem   = args.output.rsplit(".", 1)[0] if "." in args.output else args.output
         suffix = "." + args.output.rsplit(".", 1)[1] if "." in args.output else ".csv"
         save_csv(stem + "_summary" + suffix, sum_headers, sum_rows)
+
+    if args.report:
+        save_report(
+            path       = args.report,
+            log_path   = args.log,
+            start_dt   = start_dt,
+            end_dt     = end_dt,
+            total_min  = total_min,
+            total      = total,
+            completed  = completed,
+            failed     = failed,
+            sum_headers = sum_headers,
+            sum_rows    = sum_rows,
+            job_headers = job_headers,
+            job_rows    = job_rows,
+        )
 
 
 if __name__ == "__main__":
