@@ -71,12 +71,13 @@ flowchart TB
     v29["report"]
     v37["summary"]
     v39[" "]
-    v42[" "]
+    v43[" "]
     end
     subgraph "POSTPROCESS [POSTPROCESS]"
     v38(["BUILD_LIBRARY_DICT"])
-    v40(["DEDUPLICATE"])
-    v41(["ENRICHMENT"])
+    v40(["NORMALIZE"])
+    v41(["DEDUPLICATE"])
+    v42(["ENRICHMENT"])
     end
     v4(( ))
     v0 --> v1
@@ -123,6 +124,7 @@ flowchart TB
     v38 --> v39
     v40 --> v41
     v41 --> v42
+    v42 --> v43
 
 </pre>
 <script type="module">

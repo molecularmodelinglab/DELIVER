@@ -39,6 +39,9 @@ uv pip install "${DELI_DIR}"
 echo "Installing missing DELi dependencies..."
 uv pip install pyarrow
 
+echo "Installing DELIVER package..."
+uv pip install -e "${SCRIPT_DIR}"
+
 echo "Done: ${SCRIPT_DIR}/.venv"
 
 # ---------------------------------------------------------------------------

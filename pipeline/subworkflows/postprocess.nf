@@ -48,6 +48,28 @@ process BUILD_LIBRARY_DICT {
     """
 }
 
+process NORMALIZE {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path counts_parquet
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    """
+    python ${projectDir}/../src/deliver/postprocess/normalize.py \
+        --input  ${counts_parquet} \
+        --output normalized.parquet
+    """
+
+    stub:
+    """
+    touch normalized.parquet
+    """
+}
+
 process DEDUPLICATE {
     tag "deduplicate"
     publishDir "${params.out_dir}", mode: 'copy'
@@ -176,10 +198,13 @@ workflow POSTPROCESS {
     ========================================
     """.stripIndent()
 
-    // Step 1: Deduplicate
-    DEDUPLICATE(counts)
+    // Step 1: Normalize
+    NORMALIZE(counts)
 
-    // Step 2: Enrichment analysis
+    // Step 2: Deduplicate
+    DEDUPLICATE(NORMALIZE.out)
+
+    // Step 3: Enrichment analysis
     ENRICHMENT(DEDUPLICATE.out.dedup)
 
     emit:

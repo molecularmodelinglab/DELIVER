@@ -43,6 +43,9 @@ uv pip install "${DELI_DIR}"
 echo "Installing missing DELi dependencies..."
 uv pip install pyarrow
 
+echo "Installing DELIVER package..."
+uv pip install -e "${SCRIPT_DIR}"
+
 # ---------------------------------------------------------------------------
 # 4. DELi config initialization
 # ---------------------------------------------------------------------------
