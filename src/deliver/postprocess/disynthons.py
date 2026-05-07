@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import math
 import sys
 from itertools import combinations
 from pathlib import Path
@@ -16,14 +17,47 @@ def _cycle_cols(library_dict: dict) -> list[str]:
     return sorted({k for lib in library_dict.values() for k in lib})
 
 
-def disynthon_counts(df: pl.DataFrame, col1: str, col2: str) -> pl.DataFrame:
-    """Sum corrected_count grouped by (library_id, col1, col2)."""
-    return (
+def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
+    """Aggregate corrected_count and raw_count to disynthon level.
+
+    Adds tot_compounds (including unobserved), mean_count, and std_count
+    where mean and std treat unobserved compounds as zero.
+    """
+    agg = (
         df
         .filter(pl.col(col1).is_not_null() & pl.col(col2).is_not_null())
         .group_by(["library_id", col1, col2])
-        .agg(pl.col("corrected_count").sum(), pl.col("raw_count").sum())
+        .agg(
+            pl.col("corrected_count").sum(),
+            pl.col("raw_count").sum(),
+            (pl.col("corrected_count") ** 2).sum().alias("_sum_sq"),
+        )
         .sort(["library_id", col1, col2])
+    )
+
+    # tot_compounds = product of all OTHER cycle counts for this (col1, col2) pair
+    lib_tot = {
+        lib_id: math.prod(count for k, count in lib.items() if k not in {col1, col2})
+        for lib_id, lib in library_dict.items()
+        if col1 in lib and col2 in lib
+    }
+    lib_tot_df = pl.DataFrame({
+        "library_id":    list(lib_tot.keys()),
+        "tot_compounds": list(lib_tot.values()),
+    })
+
+    return (
+        agg
+        .join(lib_tot_df, on="library_id", how="left")
+        .with_columns(
+            (pl.col("corrected_count") / pl.col("tot_compounds")).alias("mean_count"),
+        )
+        .with_columns(
+            (
+                (pl.col("_sum_sq") / pl.col("tot_compounds") - pl.col("mean_count") ** 2).sqrt()
+            ).alias("std_count"),
+        )
+        .drop("_sum_sq")
     )
 
 
@@ -55,7 +89,7 @@ def main(args=None):
 
     for col1, col2 in combinations(_cycle_cols(library_dict), 2):
         name = col1 + col2
-        disynthon_counts(df, col1, col2).write_parquet(output_dir / f"disynthons_{name}.parquet")
+        disynthon_counts(df, col1, col2, library_dict).write_parquet(output_dir / f"disynthons_{name}.parquet")
 
 
 if __name__ == "__main__":

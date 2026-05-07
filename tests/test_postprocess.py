@@ -354,6 +354,43 @@ class TestDisynthons:
         df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
         assert df["corrected_count"].to_list() == [6, 2]
 
+    def test_ab_statistics(self, tmp_path):
+        # library: A=2, B=1, C=2 → tot_compounds per AB = C = 2
+        # A1-B1: counts [4,2] → sum=6, mean=3.0, sum_sq=20, std=sqrt(20/2-9)=1.0
+        # A2-B1: counts [1,1] → sum=2, mean=1.0, sum_sq=2,  std=sqrt(2/2-1)=0.0
+        inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        assert df["tot_compounds"].to_list() == [2, 2]
+        assert df["mean_count"].to_list() == pytest.approx([3.0, 1.0])
+        assert df["std_count"].to_list() == pytest.approx([1.0, 0.0])
+
+    def test_multi_library_not_mixed(self, tmp_path):
+        # Two libraries both have A="1", B="1" — must stay separate.
+        # L01: A=2, B=1, C=2 → AB tot_compounds=2; A1-B1 sum=6
+        # L02: A=1, B=1       → AB tot_compounds=1; A1-B1 sum=3
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L02-1-1"],
+            "library_id":      ["L01",        "L01",        "L02"],
+            "A":               ["1",          "1",          "1"],
+            "B":               ["1",          "1",          "1"],
+            "C":               ["1",          "2",          None],
+            "raw_count":       [4, 2, 3],
+            "corrected_count": [4, 2, 3],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib_dict = {"L01": {"A": 2, "B": 1, "C": 2}, "L02": {"A": 1, "B": 1}}
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps(lib_dict))
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        ab = pl.read_parquet(out / "disynthons_AB.parquet").sort(["library_id", "A", "B"])
+        assert ab["library_id"].to_list() == ["L01", "L02"]
+        assert ab["corrected_count"].to_list() == [6, 3]
+        assert ab["tot_compounds"].to_list() == [2, 1]
+
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
             disynthons(["--input", str(tmp_path / "nonexistent.parquet"),
