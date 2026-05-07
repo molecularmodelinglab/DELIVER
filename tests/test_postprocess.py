@@ -216,21 +216,78 @@ class TestDeduplicate:
             deduplicate([])
 
 
+@pytest.fixture
+def normalized_parquet(tmp_path):
+    """Minimal normalized parquet in common format."""
+    df = pl.DataFrame({
+        "compound_id":      ["L01-1-2-3", "L01-1-2-4", "L02-1-2-3"],
+        "library_id":       ["L01",       "L01",        "L02"],
+        "A":                ["1",         "1",          "1"],
+        "B":                ["2",         "2",          "2"],
+        "C":                ["3",         "4",          "3"],
+        "raw_count":        [10,          5,            8],
+        "corrected_count":  [10,          5,            8],
+    })
+    path = tmp_path / "normalized.parquet"
+    df.write_parquet(path)
+    return path
+
+
+@pytest.fixture
+def library_dict_json(tmp_path):
+    """Minimal library dict JSON."""
+    data = {
+        "L01": {"A": 100, "B": 200, "C": 150},
+        "L02": {"A": 80,  "B": 120, "C": 100},
+    }
+    path = tmp_path / "library_dict.json"
+    path.write_text(json.dumps(data))
+    return path
+
+
 class TestEnrichment:
-    def test_runs_and_writes_output(self, counts_parquet, tmp_path):
+    def test_runs_and_writes_output(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
-        enrichment(["--input", str(counts_parquet), "--output", str(out)])
+        enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         assert out.exists()
 
-    def test_output_is_valid_parquet(self, counts_parquet, tmp_path):
+    def test_output_has_z_score_norm(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
-        enrichment(["--input", str(counts_parquet), "--output", str(out)])
+        enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
-        assert len(df) > 0
+        assert "z_score_norm" in df.columns
 
-    def test_missing_input_fails(self, tmp_path):
+    def test_output_row_count_unchanged(self, normalized_parquet, library_dict_json, tmp_path):
+        out = tmp_path / "enrichment.parquet"
+        enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert len(df) == 3
+
+    def test_missing_input_fails(self, library_dict_json, tmp_path):
         with pytest.raises(SystemExit):
-            enrichment(["--input", str(tmp_path / "nonexistent.parquet"), "--output", str(tmp_path / "out.parquet")])
+            enrichment(["--input", str(tmp_path / "nonexistent.parquet"), "--library-dict", str(library_dict_json), "--output", str(tmp_path / "out.parquet")])
+
+    def test_missing_library_dict_fails(self, normalized_parquet, tmp_path):
+        with pytest.raises(SystemExit):
+            enrichment(["--input", str(normalized_parquet), "--library-dict", str(tmp_path / "nonexistent.json"), "--output", str(tmp_path / "out.parquet")])
+
+    def test_z_score_values(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["LIB-1-2-3", "LIB-3-2-1"],
+            "library_id":      ["LIB",   "LIB"],
+            "raw_count":       [15, 2],
+            "corrected_count": [9, 1],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib_dict = tmp_path / "lib.json"
+        lib_dict.write_text(json.dumps({"LIB": {"A": 10, "B": 100, "C": 100}}))
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
+        result = pl.read_parquet(out).sort("compound_id")
+        z = result["z_score_norm"].to_list()
+        assert z[0] == pytest.approx(284.6032)
+        assert z[1] == pytest.approx(31.619772)
 
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):

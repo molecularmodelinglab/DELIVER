@@ -133,43 +133,17 @@ process ENRICHMENT {
 
     input:
     path deduplicated_parquet
-    // Deduplicated parquet file (staged from GCS if needed)
+    path library_dict
 
     output:
     path "enrichment.parquet", emit: enrichment
 
     script:
-    def deli_data_arg = params.deli_data_dir 
-        ? "--deli-data-dir '${params.deli_data_dir}'" 
-        : ""
-
     """
-    echo "========================================"
-    echo "ENRICHMENT: Performing enrichment analysis"
-    echo "========================================"
-    echo "Input: ${deduplicated_parquet}"
-    
-    # Verify input file exists
-    if [[ ! -f "${deduplicated_parquet}" ]]; then
-        echo "ERROR: Input parquet not found: ${deduplicated_parquet}"
-        ls -lah
-        exit 1
-    fi
-    
-    echo "Input file size: \$(du -h ${deduplicated_parquet} | cut -f1)"
-
-    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \\
-        --input  ${deduplicated_parquet} \\
-        --output enrichment.parquet \\
-        ${deli_data_arg}
-
-    # Verify output
-    if [[ -f enrichment.parquet ]]; then
-        echo "Output file size: \$(du -h enrichment.parquet | cut -f1)"
-    else
-        echo "ERROR: Enrichment analysis failed, output not created"
-        exit 1
-    fi
+    python ${projectDir}/../src/deliver/postprocess/enrichment.py \
+        --input        ${deduplicated_parquet} \
+        --library-dict ${library_dict} \
+        --output       enrichment.parquet
     """
 
     stub:
@@ -205,7 +179,7 @@ workflow POSTPROCESS {
     DEDUPLICATE(NORMALIZE.out)
 
     // Step 3: Enrichment analysis
-    ENRICHMENT(DEDUPLICATE.out.dedup)
+    ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
 
     emit:
     results      = ENRICHMENT.out.enrichment
