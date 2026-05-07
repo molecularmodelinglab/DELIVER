@@ -8,6 +8,7 @@ import pytest
 from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate
+from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.enrichment import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
 
@@ -292,3 +293,73 @@ class TestEnrichment:
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
             enrichment([])
+
+
+class TestDisynthons:
+    def _write_input(self, tmp_path, corrected_counts, cycles=3):
+        """3-cycle input by default: L01, A in {1,2}, B in {1}, C in {1,2}."""
+        if cycles == 3:
+            df = pl.DataFrame({
+                "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-2-1-1", "L01-2-1-2"],
+                "library_id":      ["L01"] * 4,
+                "A":               ["1", "1", "2", "2"],
+                "B":               ["1", "1", "1", "1"],
+                "C":               ["1", "2", "1", "2"],
+                "raw_count":       corrected_counts,
+                "corrected_count": corrected_counts,
+            })
+            lib_dict = {"L01": {"A": 2, "B": 1, "C": 2}}
+        else:
+            df = pl.DataFrame({
+                "compound_id":     ["L01-1-1", "L01-1-2"],
+                "library_id":      ["L01", "L01"],
+                "A":               ["1", "1"],
+                "B":               ["1", "2"],
+                "raw_count":       corrected_counts,
+                "corrected_count": corrected_counts,
+            })
+            lib_dict = {"L01": {"A": 1, "B": 2}}
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps(lib_dict))
+        return inp, lib
+
+    def test_runs_and_writes_output(self, tmp_path):
+        inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(tmp_path / "out")])
+        assert (tmp_path / "out" / "disynthons_AB.parquet").exists()
+
+    def test_3_cycle_produces_ab_bc_ac(self, tmp_path):
+        inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        assert (out / "disynthons_AB.parquet").exists()
+        assert (out / "disynthons_BC.parquet").exists()
+        assert (out / "disynthons_AC.parquet").exists()
+
+    def test_2_cycle_produces_only_ab(self, tmp_path):
+        inp, lib = self._write_input(tmp_path, [6, 2], cycles=2)
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        assert (out / "disynthons_AB.parquet").exists()
+        assert not (out / "disynthons_BC.parquet").exists()
+        assert not (out / "disynthons_AC.parquet").exists()
+
+    def test_ab_aggregates_over_c(self, tmp_path):
+        # A1-B1: 4+2=6, A2-B1: 1+1=2
+        inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        assert df["corrected_count"].to_list() == [6, 2]
+
+    def test_missing_input_fails(self, tmp_path):
+        with pytest.raises(SystemExit):
+            disynthons(["--input", str(tmp_path / "nonexistent.parquet"),
+                        "--library-dict", str(tmp_path / "lib.json"),
+                        "--output-dir", str(tmp_path / "out")])
+
+    def test_missing_required_args_fails(self):
+        with pytest.raises(SystemExit):
+            disynthons([])

@@ -136,7 +136,8 @@ process ENRICHMENT {
     path library_dict
 
     output:
-    path "enrichment.parquet", emit: enrichment
+    path "enrichment.parquet"
+    path "disynthons_*.parquet"
 
     script:
     """
@@ -144,11 +145,17 @@ process ENRICHMENT {
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output       enrichment.parquet
+
+    python ${projectDir}/../src/deliver/postprocess/disynthons.py \
+        --input        ${deduplicated_parquet} \
+        --library-dict ${library_dict} \
+        --output-dir   .
     """
 
     stub:
     """
     touch enrichment.parquet
+    touch disynthons_AB.parquet
     """
 }
 
@@ -182,6 +189,7 @@ workflow POSTPROCESS {
     ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
 
     emit:
-    results      = ENRICHMENT.out.enrichment
+    enrichment   = ENRICHMENT.out[0]
+    disynthons   = ENRICHMENT.out[1]
     library_dict = BUILD_LIBRARY_DICT.out
 }
