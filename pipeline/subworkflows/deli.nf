@@ -90,27 +90,32 @@ process DecodeChunk {
     val deli_args
 
     output:
-    path "${prefix}_${fastq_chunk.baseName}_decoded.tsv", emit: decoded_tsv
-    path "${prefix}_${fastq_chunk.baseName}_decode_statistics.json", emit: decode_stats
-    path "deli.log", emit: deli_log
+    path "${prefix}_${fastq_chunk.simpleName}_decoded.tsv", emit: decoded_tsv
+    path "${prefix}_${fastq_chunk.simpleName}_decode_statistics.json", emit: decode_stats
+    path "${prefix}_${fastq_chunk.simpleName}_deli.log", emit: deli_log
+    path "${prefix}_${fastq_chunk.simpleName}_failed_decoding.tsv", emit: failed_tsv, optional: true
 
     script:
+    def fastq_info_flag  = params.save_fastq_info ? "--save-fastq-info" : ""
+    def save_failed_flag = params.save_failed      ? "--save-failed"     : ""
     """
-    mkdir -p decoded_output
-
     deli ${deli_args} decode run \
         "${selection_file}" \
         "${fastq_chunk}" \
         --out-dir ./ \
-        --prefix "${prefix}_${fastq_chunk.baseName}" \
-        --skip-report
+        --prefix "${prefix}_${fastq_chunk.simpleName}" \
+        --skip-report \
+        ${fastq_info_flag} \
+        ${save_failed_flag}
+
+    mv deli.log ${prefix}_${fastq_chunk.simpleName}_deli.log
     """
 
     stub:
     """
-    touch ${prefix}_${fastq_chunk.baseName}_decoded.tsv
-    echo '{}' > ${prefix}_${fastq_chunk.baseName}_decode_statistics.json
-    touch deli.log
+    touch ${prefix}_${fastq_chunk.simpleName}_decoded.tsv
+    echo '{}' > ${prefix}_${fastq_chunk.simpleName}_decode_statistics.json
+    touch ${prefix}_${fastq_chunk.simpleName}_deli.log
     """
 }
 
@@ -268,6 +273,73 @@ process WriteDecodeReport {
 }
 
 // ============================================================================
+// DEBUG MERGE PROCESSES
+// ============================================================================
+
+process MergeDebugLogs {
+    publishDir "${params.out_dir}/debug", mode: 'copy'
+
+    input:
+    path("*_deli.log", arity: '1..*')
+    val prefix
+
+    output:
+    path "${prefix}_deli.log"
+
+    script:
+    """
+    cat *_deli.log > ${prefix}_deli.log
+    """
+
+    stub:
+    """
+    touch ${prefix}_deli.log
+    """
+}
+
+process MergeDebugDecoded {
+    publishDir "${params.out_dir}/debug", mode: 'copy'
+
+    input:
+    path("*_decoded.tsv", arity: '1..*')
+    val prefix
+
+    output:
+    path "${prefix}_debug_decoded.tsv"
+
+    script:
+    """
+    awk 'FNR==1 && NR!=1{next}1' *_decoded.tsv > ${prefix}_debug_decoded.tsv
+    """
+
+    stub:
+    """
+    touch ${prefix}_debug_decoded.tsv
+    """
+}
+
+process MergeDebugFailed {
+    publishDir "${params.out_dir}/debug", mode: 'copy'
+
+    input:
+    path("*_failed_decoding.tsv", arity: '1..*')
+    val prefix
+
+    output:
+    path "${prefix}_failed_decoding.tsv"
+
+    script:
+    """
+    awk 'FNR==1 && NR!=1{next}1' *_failed_decoding.tsv > ${prefix}_failed_decoding.tsv
+    """
+
+    stub:
+    """
+    touch ${prefix}_failed_decoding.tsv
+    """
+}
+
+// ============================================================================
 // WORKFLOW
 // ============================================================================
 
@@ -314,6 +386,16 @@ workflow DELI {
     fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true)
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
+
+    if (params.debug) {
+        MergeDebugLogs(decoded.deli_log.collect(), prefix_ch)
+    }
+    if (params.save_fastq_info) {
+        MergeDebugDecoded(decoded.decoded_tsv.collect(), prefix_ch)
+    }
+    if (params.save_failed) {
+        MergeDebugFailed(decoded.failed_tsv.collect(), prefix_ch)
+    }
 
     collected_decodes = CollectDecodeChunks(
         decoded.decoded_tsv.collect(),

@@ -102,6 +102,12 @@ prefix: ""
 # debug: enable DELi debug logging
 debug: false
 
+# save_fastq_info: include fastq_file and read_name columns in decoded output (published to out_dir/debug/decoded/)
+save_fastq_info: false
+
+# save_failed: save failed decoding results per chunk to out_dir/debug/failed/
+save_failed: false
+
 # config_file: optional path to a custom DELi config file
 # config_file: null
 
