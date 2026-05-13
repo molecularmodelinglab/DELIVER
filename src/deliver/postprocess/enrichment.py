@@ -11,30 +11,24 @@ import polars as pl
 from deliver.postprocess.common import validate_common_format
 
 
-def _n_compounds(library_dict: dict) -> int:
-    """Total number of possible compounds across all libraries (product of BB counts per library)."""
-    total = 0
-    for lib in library_dict.values():
-        product = 1
-        for count in lib.values():
-            product *= count
-        total += product
-    return total
+def _enrich_library(df: pl.DataFrame, n_compounds: int) -> pl.DataFrame:
+    n_total = df["corrected_count"].sum()
+    c_expected = n_total / n_compounds
+    denom = math.sqrt(c_expected * (1 - c_expected / n_total))
+    norm_factor = math.sqrt(n_total)
+    return df.with_columns(
+        ((pl.col("corrected_count") - c_expected) / denom / norm_factor).alias("z_score_norm")
+    )
 
 
 def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:
-    n_total = df["corrected_count"].sum()
-    n_compounds = _n_compounds(library_dict)
-    c_expected = n_total / n_compounds
-
-    denom = math.sqrt(c_expected * (1 - c_expected / n_total))
-    norm_factor = math.sqrt(n_total)
-
-    return df.with_columns(
-        (
-            (pl.col("corrected_count") - c_expected) / denom / norm_factor
-        ).alias("z_score_norm")
-    )
+    results = []
+    for lib_id, lib in library_dict.items():
+        df_lib = df.filter(pl.col("library_id") == lib_id)
+        if len(df_lib) == 0:
+            continue
+        results.append(_enrich_library(df_lib, math.prod(lib.values())))
+    return pl.concat(results)
 
 
 def main(args=None):

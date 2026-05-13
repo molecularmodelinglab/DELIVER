@@ -290,6 +290,25 @@ class TestEnrichment:
         assert z[0] == pytest.approx(284.6032)
         assert z[1] == pytest.approx(31.619772)
 
+    def test_z_score_is_per_library(self, tmp_path):
+        # Two libraries, each with 2 compounds of equal count.
+        # Within each library the z-score should be 0 (counts equal to expected).
+        # A global z-score would give non-zero values if library sizes differ.
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1", "L01-2", "L02-1", "L02-2"],
+            "library_id":      ["L01",   "L01",   "L02",   "L02"],
+            "raw_count":       [5, 5, 100, 100],
+            "corrected_count": [5, 5, 100, 100],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib_dict = tmp_path / "lib.json"
+        lib_dict.write_text(json.dumps({"L01": {"A": 2}, "L02": {"A": 2}}))
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
+        result = pl.read_parquet(out)
+        assert result["z_score_norm"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
+
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
             enrichment([])
