@@ -1,6 +1,7 @@
 """Tests for postprocess CLI commands."""
 
 import json
+import math
 
 import polars as pl
 import pytest
@@ -377,6 +378,8 @@ class TestDisynthons:
         # library: A=2, B=1, C=2 → tot_compounds per AB = C = 2
         # A1-B1: counts [4,2] → sum=6, mean=3.0, sum_sq=20, std=sqrt(20/2-9)=1.0
         # A2-B1: counts [1,1] → sum=2, mean=1.0, sum_sq=2,  std=sqrt(2/2-1)=0.0
+        # z-score: n_disynthons=A*B=2, n_total=8, c_expected=4
+        # z = (count - 4) / sqrt(2) / sqrt(8) = (count - 4) / 4
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
@@ -384,6 +387,7 @@ class TestDisynthons:
         assert df["tot_compounds"].to_list() == [2, 2]
         assert df["mean_count"].to_list() == pytest.approx([3.0, 1.0])
         assert df["std_count"].to_list() == pytest.approx([1.0, 0.0])
+        assert df["z_score_norm"].to_list() == pytest.approx([0.5, -0.5])
 
     def test_multi_library_not_mixed(self, tmp_path):
         # Two libraries both have A="1", B="1" — must stay separate.
@@ -409,6 +413,9 @@ class TestDisynthons:
         assert ab["library_id"].to_list() == ["L01", "L02"]
         assert ab["corrected_count"].to_list() == [6, 3]
         assert ab["tot_compounds"].to_list() == [2, 1]
+        # L01: z-score well-defined; L02 has n_disynthons=1 → z-score undefined (NaN)
+        assert ab["z_score_norm"][0] == pytest.approx(1.0)
+        assert math.isnan(ab["z_score_norm"][1])
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -419,3 +426,74 @@ class TestDisynthons:
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
             disynthons([])
+
+
+class TestDisynthonsComprehensive:
+    """Full 3-cycle library: L01 with A=2, B=2, C=2 (all 8 compounds).
+
+    Counts: A1-B1-C1=6, A1-B1-C2=2, A1-B2-C1=4, A1-B2-C2=4,
+            A2-B1-C1=1, A2-B1-C2=1, A2-B2-C1=1, A2-B2-C2=1.  n_total=20.
+
+    All three pairs share the same z-score denominator:
+      n_disynthons=4, c_expected=5, denom*norm = sqrt(3.75)*sqrt(20) = 5*sqrt(3)
+    """
+
+    @pytest.fixture
+    def disynthon_tables(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-1-2-1", "L01-1-2-2",
+                                "L01-2-1-1", "L01-2-1-2", "L01-2-2-1", "L01-2-2-2"],
+            "library_id":      ["L01"] * 8,
+            "A":               ["1", "1", "1", "1", "2", "2", "2", "2"],
+            "B":               ["1", "1", "2", "2", "1", "1", "2", "2"],
+            "C":               ["1", "2", "1", "2", "1", "2", "1", "2"],
+            "raw_count":       [6, 2, 4, 4, 1, 1, 1, 1],
+            "corrected_count": [6, 2, 4, 4, 1, 1, 1, 1],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps({"L01": {"A": 2, "B": 2, "C": 2}}))
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        denom_norm = 5 * math.sqrt(3)  # sqrt(3.75) * sqrt(20)
+        return {
+            "AB": pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"]),
+            "BC": pl.read_parquet(out / "disynthons_BC.parquet").sort(["B", "C"]),
+            "AC": pl.read_parquet(out / "disynthons_AC.parquet").sort(["A", "C"]),
+            "denom_norm": denom_norm,
+        }
+
+    def test_ab_counts(self, disynthon_tables):
+        # A1-B1: 6+2=8, A1-B2: 4+4=8, A2-B1: 1+1=2, A2-B2: 1+1=2
+        ab = disynthon_tables["AB"]
+        assert ab["corrected_count"].to_list() == [8, 8, 2, 2]
+        assert ab["tot_compounds"].to_list() == [2, 2, 2, 2]
+        assert ab["mean_count"].to_list() == pytest.approx([4.0, 4.0, 1.0, 1.0])
+
+    def test_bc_counts(self, disynthon_tables):
+        # B1-C1: 6+1=7, B1-C2: 2+1=3, B2-C1: 4+1=5, B2-C2: 4+1=5
+        bc = disynthon_tables["BC"]
+        assert bc["corrected_count"].to_list() == [7, 3, 5, 5]
+        assert bc["tot_compounds"].to_list() == [2, 2, 2, 2]
+
+    def test_ac_counts(self, disynthon_tables):
+        # A1-C1: 6+4=10, A1-C2: 2+4=6, A2-C1: 1+1=2, A2-C2: 1+1=2
+        ac = disynthon_tables["AC"]
+        assert ac["corrected_count"].to_list() == [10, 6, 2, 2]
+        assert ac["tot_compounds"].to_list() == [2, 2, 2, 2]
+
+    def test_ab_z_scores(self, disynthon_tables):
+        dn = disynthon_tables["denom_norm"]
+        z = disynthon_tables["AB"]["z_score_norm"].to_list()
+        assert z == pytest.approx([3/dn, 3/dn, -3/dn, -3/dn])
+
+    def test_bc_z_scores(self, disynthon_tables):
+        dn = disynthon_tables["denom_norm"]
+        z = disynthon_tables["BC"]["z_score_norm"].to_list()
+        assert z == pytest.approx([2/dn, -2/dn, 0.0, 0.0])
+
+    def test_ac_z_scores(self, disynthon_tables):
+        dn = disynthon_tables["denom_norm"]
+        z = disynthon_tables["AC"]["z_score_norm"].to_list()
+        assert z == pytest.approx([5/dn, 1/dn, -3/dn, -3/dn])
