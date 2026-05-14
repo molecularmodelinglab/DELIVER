@@ -270,11 +270,12 @@ class TestEnrichment:
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         assert out.exists()
 
-    def test_output_has_z_score_norm(self, normalized_parquet, library_dict_json, tmp_path):
+    def test_output_has_z_score_columns(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
-        assert "z_score_norm" in df.columns
+        assert "z_score_lib" in df.columns
+        assert "z_score_global" in df.columns
 
     def test_output_row_count_unchanged(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
@@ -304,7 +305,7 @@ class TestEnrichment:
         out = tmp_path / "enrich.parquet"
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out).sort("compound_id")
-        z = result["z_score_norm"].to_list()
+        z = result["z_score_lib"].to_list()
         assert z[0] == pytest.approx(284.6032)
         assert z[1] == pytest.approx(31.619772)
 
@@ -325,7 +326,30 @@ class TestEnrichment:
         out = tmp_path / "enrich.parquet"
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out)
-        assert result["z_score_norm"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
+        assert result["z_score_lib"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
+        # global z-score uses both libraries together, so L01 (count=5) and L02 (count=100)
+        # are compared against a shared expected value — result is non-zero
+        assert any(z != pytest.approx(0.0) for z in result["z_score_global"].to_list())
+
+    def test_z_score_global_values(self, tmp_path):
+        # L01: counts [10, 10] (equal → lib z=0), L02: counts [6, 2].
+        # Global: n_compounds=4, n_total=28, c_expected=7,
+        #   denom_norm = sqrt(7*0.75) * sqrt(28) = sqrt(147) = 7*sqrt(3).
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1", "L01-2", "L02-1", "L02-2"],
+            "library_id":      ["L01",   "L01",   "L02",   "L02"],
+            "raw_count":       [10, 10, 6, 2],
+            "corrected_count": [10, 10, 6, 2],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib_dict = tmp_path / "lib.json"
+        lib_dict.write_text(json.dumps({"L01": {"A": 2}, "L02": {"A": 2}}))
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
+        result = pl.read_parquet(out).sort("compound_id")
+        dn = 7 * math.sqrt(3)
+        assert result["z_score_global"].to_list() == pytest.approx([3/dn, 3/dn, -1/dn, -5/dn])
 
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
@@ -404,7 +428,7 @@ class TestDisynthons:
         assert df["tot_compounds"].to_list() == [2, 2]
         assert df["mean_count"].to_list() == pytest.approx([3.0, 1.0])
         assert df["std_count"].to_list() == pytest.approx([1.0, 0.0])
-        assert df["z_score_norm"].to_list() == pytest.approx([0.5, -0.5])
+        assert df["z_score_lib"].to_list() == pytest.approx([0.5, -0.5])
 
     def test_multi_library_not_mixed(self, tmp_path):
         # Two libraries both have A="1", B="1" — must stay separate.
@@ -431,8 +455,14 @@ class TestDisynthons:
         assert ab["corrected_count"].to_list() == [6, 3]
         assert ab["tot_compounds"].to_list() == [2, 1]
         # L01: z-score well-defined; L02 has n_disynthons=1 → z-score undefined (NaN)
-        assert ab["z_score_norm"][0] == pytest.approx(1.0)
-        assert math.isnan(ab["z_score_norm"][1])
+        assert ab["z_score_lib"][0] == pytest.approx(1.0)
+        assert math.isnan(ab["z_score_lib"][1])
+        # global z-score: n_disynthons_total=3, n_total=9, c_expected=3,
+        #   denom_norm = sqrt(3*2/3) * sqrt(9) = sqrt(2)*3 = 3*sqrt(2).
+        # L02 global z-score is 0 (not NaN) even though lib z-score is undefined.
+        dn = 3 * math.sqrt(2)
+        assert ab["z_score_global"][0] == pytest.approx(3/dn)
+        assert ab["z_score_global"][1] == pytest.approx(0.0)
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -502,15 +532,15 @@ class TestDisynthonsComprehensive:
 
     def test_ab_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["AB"]["z_score_norm"].to_list()
+        z = disynthon_tables["AB"]["z_score_lib"].to_list()
         assert z == pytest.approx([3/dn, 3/dn, -3/dn, -3/dn])
 
     def test_bc_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["BC"]["z_score_norm"].to_list()
+        z = disynthon_tables["BC"]["z_score_lib"].to_list()
         assert z == pytest.approx([2/dn, -2/dn, 0.0, 0.0])
 
     def test_ac_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["AC"]["z_score_norm"].to_list()
+        z = disynthon_tables["AC"]["z_score_lib"].to_list()
         assert z == pytest.approx([5/dn, 1/dn, -3/dn, -3/dn])

@@ -6,17 +6,25 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.common import add_z_score_norm, load_inputs
+from deliver.postprocess.columns import CORRECTED_COUNT, LIBRARY_ID, Z_SCORE_GLOBAL, Z_SCORE_LIB
+from deliver.postprocess.common import load_inputs
+from deliver.postprocess.metrics import z_score
 
 
 def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:
-    results = []
+    lib_results = []
     for lib_id, lib in library_dict.items():
-        df_lib = df.filter(pl.col("library_id") == lib_id)
+        df_lib = df.filter(pl.col(LIBRARY_ID) == lib_id)
         if len(df_lib) == 0:
             continue
-        results.append(add_z_score_norm(df_lib, math.prod(lib.values())))
-    return pl.concat(results)
+        n = math.prod(lib.values())  # number of possible compounds in the library
+        lib_results.append(
+            df_lib.with_columns(z_score(df_lib[CORRECTED_COUNT], n).alias(Z_SCORE_LIB))
+        )
+    df_result = pl.concat(lib_results)
+    # number of possible compounds in the library pool
+    n_total = sum(math.prod(lib.values()) for lib in library_dict.values())
+    return df_result.with_columns(z_score(df_result[CORRECTED_COUNT], n_total).alias(Z_SCORE_GLOBAL))
 
 
 def main(args=None):

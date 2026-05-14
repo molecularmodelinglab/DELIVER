@@ -6,6 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
+from deliver.postprocess.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
 from deliver.postprocess.common import validate_common_format
 
 DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}
@@ -21,7 +22,7 @@ def _add_cycle_columns(df: pl.DataFrame, n_cycles: int) -> pl.DataFrame:
     Rows with fewer cycles than n_cycles get null for the missing columns.
     """
     cycle_letters = [chr(ord("A") + i) for i in range(n_cycles)]
-    compound_id = (pl.col("library_id") + "-" + pl.col("bb_ids").str.replace_all(",", "-")).alias("compound_id")
+    compound_id = (pl.col(LIBRARY_ID) + "-" + pl.col("bb_ids").str.replace_all(",", "-")).alias(COMPOUND_ID)
 
     return (
         df
@@ -46,8 +47,8 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
 
     return (
         _add_cycle_columns(df, n_cycles)
-        .rename({"count": "corrected_count"})
-        .select(["compound_id", "library_id"] + cycle_cols + ["raw_count", "corrected_count"])
+        .rename({"count": CORRECTED_COUNT})
+        .select([COMPOUND_ID, LIBRARY_ID] + cycle_cols + [RAW_COUNT, CORRECTED_COUNT])
     )
 
 
