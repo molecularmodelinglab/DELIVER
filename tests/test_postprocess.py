@@ -123,6 +123,23 @@ class TestNormalize:
         normalize(["--input", str(inp), "--output", str(out)])
         assert out.exists()
 
+    def test_mixed_cycle_lengths(self, tmp_path):
+        # L01 has 3 cycles, L02 has 2 cycles — shorter rows get null for C.
+        df = pl.DataFrame({
+            "library_id": ["L01", "L02"],
+            "bb_ids":     ["1,2,3", "1,2"],
+            "count":      [5, 3],
+            "raw_count":  [6, 4],
+        })
+        inp = tmp_path / "counts.parquet"
+        df.write_parquet(inp)
+        out = tmp_path / "normalized.parquet"
+        normalize(["--input", str(inp), "--output", str(out)])
+        result = pl.read_parquet(out)
+        assert "C" in result.columns
+        l02 = result.filter(pl.col("library_id") == "L02")
+        assert l02["C"][0] is None
+
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
             normalize(["--input", str(tmp_path / "nonexistent.parquet"), "--output", str(tmp_path / "out.parquet")])

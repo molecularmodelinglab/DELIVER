@@ -11,37 +11,47 @@ from deliver.postprocess.common import validate_common_format
 DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}
 
 
+def _max_cycles(bb_ids: pl.Series) -> int:
+    return bb_ids.str.split(",").list.len().max()
+
+
+def _add_cycle_columns(df: pl.DataFrame, n_cycles: int) -> pl.DataFrame:
+    """Split bb_ids into compound_id and one column per cycle (A, B, C...).
+
+    Rows with fewer cycles than n_cycles get null for the missing columns.
+    """
+    cycle_letters = [chr(ord("A") + i) for i in range(n_cycles)]
+    compound_id = (pl.col("library_id") + "-" + pl.col("bb_ids").str.replace_all(",", "-")).alias("compound_id")
+
+    return (
+        df
+        .with_columns(compound_id, pl.col("bb_ids").str.split(",").alias("_bb_list"))
+        .with_columns([
+            # get the i-th building block id and put it in the corresponding cycle column
+            pl.col("_bb_list").list.get(i, null_on_oob=True).alias(letter)
+            for i, letter in enumerate(cycle_letters)
+        ])
+        .drop("_bb_list")
+    )
+
+
 def normalize(df: pl.DataFrame) -> pl.DataFrame:
     missing = DELI_REQUIRED_COLUMNS - set(df.columns)
     if missing:
         print(f"Error: missing required columns in DELi counts: {missing}", file=sys.stderr)
         sys.exit(1)
 
-    bb_lists = df["bb_ids"].str.split(",")
-    max_cycles = bb_lists.list.len().max()
-
-    df = df.with_columns(
-        (pl.col("library_id") + "-" + pl.col("bb_ids").str.replace_all(",", "-")).alias("compound_id"),
-        bb_lists.alias("_bb_list"),
-    )
-
-    for i in range(max_cycles):
-        letter = chr(ord("A") + i)
-        df = df.with_columns(pl.col("_bb_list").list.get(i).alias(letter))
-
-    cols_to_drop = ["_bb_list", "bb_ids"] + [c for c in ["dedup_count"] if c in df.columns]
-    cycle_cols = [chr(ord("A") + i) for i in range(max_cycles)]
+    n_cycles = _max_cycles(df["bb_ids"])
+    cycle_cols = [chr(ord("A") + i) for i in range(n_cycles)]
 
     return (
-        df
-        .drop(cols_to_drop)
+        _add_cycle_columns(df, n_cycles)
         .rename({"count": "corrected_count"})
         .select(["compound_id", "library_id"] + cycle_cols + ["raw_count", "corrected_count"])
     )
 
 
 def main(args=None):
-    """Normalize DELi counts parquet to common format."""
     parser = argparse.ArgumentParser(description="Normalize DELi counts parquet to common format.")
     parser.add_argument("--input",  required=True, help="Input DELi counts parquet file.")
     parser.add_argument("--output", required=True, help="Output normalized parquet file.")
