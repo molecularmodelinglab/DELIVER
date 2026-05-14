@@ -20,17 +20,9 @@ def _cycle_cols(library_dict: dict) -> list[str]:
     return sorted({k for lib in library_dict.values() for k in lib})
 
 
-def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
-    """Aggregate to disynthon level per library.
-
-    Columns added:
-      tot_compounds  — product of remaining cycle counts (e.g. C for AB)
-      mean_count     — corrected_count / tot_compounds (zeros included)
-      std_count      — std of corrected_count across tot_compounds (zeros included)
-      z_score_lib    — per-library binomial z-score (space = col1_count * col2_count)
-      z_score_global — global binomial z-score across all libraries
-    """
-    agg = (
+def _aggregate(df: pl.DataFrame, col1: str, col2: str) -> pl.DataFrame:
+    """Group by library + col1 + col2, summing counts."""
+    return (
         df
         .filter(pl.col(col1).is_not_null() & pl.col(col2).is_not_null())
         .group_by([LIBRARY_ID, col1, col2])
@@ -42,6 +34,29 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
         .sort([LIBRARY_ID, col1, col2])
     )
 
+
+def _add_lib_statistics(df_lib: pl.DataFrame, lib: dict, col1: str, col2: str) -> pl.DataFrame:
+    """Add tot_compounds, mean_count, std_count, z_score_lib for one library."""
+    tot_compounds = math.prod(count for k, count in lib.items() if k not in {col1, col2})  # compounds per disynthon (remaining cycles' product)
+    n_disynthons = lib[col1] * lib[col2]  # number of possible disynthons in the library
+    df = (
+        df_lib
+        .with_columns(
+            pl.lit(tot_compounds).alias(TOT_COMPOUNDS),
+            (pl.col(CORRECTED_COUNT) / tot_compounds).alias(MEAN_COUNT),
+        )
+        .with_columns(
+            ((pl.col("_sum_sq") / tot_compounds - pl.col(MEAN_COUNT) ** 2).sqrt()).alias(STD_COUNT),
+        )
+        .drop("_sum_sq")
+    )
+    return df.with_columns(z_score(df[CORRECTED_COUNT], n_disynthons).alias(Z_SCORE_LIB))
+
+
+def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
+    """Aggregate to disynthon level and compute statistics per library, then add global z-score."""
+    agg = _aggregate(df, col1, col2)
+
     results = []
     for lib_id, lib in library_dict.items():
         if col1 not in lib or col2 not in lib:
@@ -49,28 +64,7 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
         df_lib = agg.filter(pl.col(LIBRARY_ID) == lib_id)
         if len(df_lib) == 0:
             continue
-
-        tot_compounds = math.prod(count for k, count in lib.items() if k not in {col1, col2})  # compounds per disynthon (remaining cycles' product)
-        n_disynthons = lib[col1] * lib[col2] # number of possible disynthons in the library
-
-        df_lib_processed = (
-            df_lib
-            # calculate average compound count per disynthon
-            .with_columns(
-                pl.lit(tot_compounds).alias(TOT_COMPOUNDS),
-                (pl.col(CORRECTED_COUNT) / tot_compounds).alias(MEAN_COUNT),
-            )
-            # ... and standard deviation
-            .with_columns(
-                ((pl.col("_sum_sq") / tot_compounds - pl.col(MEAN_COUNT) ** 2).sqrt()).alias(STD_COUNT),
-            )
-            .drop("_sum_sq")
-        )
-        results.append(
-            df_lib_processed.with_columns(
-                z_score(df_lib_processed[CORRECTED_COUNT], n_disynthons).alias(Z_SCORE_LIB)
-            )
-        )
+        results.append(_add_lib_statistics(df_lib, lib, col1, col2))
 
     df_result = pl.concat(results)
     n_total_disynthons = sum(
