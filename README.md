@@ -189,7 +189,7 @@ bash test.sh --nf       # Nextflow stub tests only (no DELi or fastp required)
 bash test.sh --py       # Python unit tests only
 ```
 
-Python unit tests for postprocessing scripts are in `tests/`. They will grow as `deduplicate.py` and `enrichment.py` are implemented.
+Python unit tests for postprocessing scripts are in `tests/`.
 
 ## Repository structure
 
@@ -210,11 +210,14 @@ DELIVER/
 ├── src/
 │   └── deliver/
 │       └── postprocess/              # standalone Python CLI scripts called by NF
-│           ├── common.py             # shared utilities (validate_common_format)
+│           ├── columns.py            # column name constants
+│           ├── common.py             # shared utilities (validate, load inputs)
+│           ├── metrics.py            # metrics (binomial z-score)
 │           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── normalize.py          # normalize DELi counts → common format
-│           ├── deduplicate.py        # deduplication + aggregation (TODO)
-│           └── enrichment.py         # enrichment scoring (TODO)
+│           ├── deduplicate.py        # deduplication + aggregation
+│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global)
+│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …)
 └── scripts/
     └── convert_hitgen/               # Hitgen TSV → DELi format converter
 ```
@@ -240,8 +243,9 @@ This creates `libraries/` and `building_blocks/` inside `--output-dir`, which yo
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
 | Build library dictionary (library_dict.json) | implemented |
 | Normalize DELi counts → common format + validation | implemented |
-| Deduplication + aggregation | stub (TODO) |
-| Enrichment scoring | stub (TODO) |
+| Deduplication + aggregation | TODO |
+| Per-compound enrichment scores (z_score_lib, z_score_global) | implemented |
+| Disynthon counts + statistics (AB, BC, AC, …) | implemented |
 
 ## params.yml
 
