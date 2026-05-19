@@ -11,3 +11,5 @@ Z_SCORE_GLOBAL = "z_score_global"
 TOT_COMPOUNDS = "tot_compounds"
 MEAN_COUNT = "mean_count"
 STD_COUNT = "std_count"
+
+POLYO = "polyo"
