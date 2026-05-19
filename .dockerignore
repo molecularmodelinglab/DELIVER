@@ -1,0 +1,65 @@
+# =============================================================
+#  .dockerignore
+#
+#  Excludes files that are not needed inside the Docker image.
+
+# =============================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python caches
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# Virtual environments
+.venv
+venv
+env
+
+# Nextflow runtime artefacts
+work/
+.nextflow/
+.nextflow.log*
+dag.html
+dag.png
+deli.log
+
+# Large data / input files (never needed in the image)
+# data/
+*.fastq
+*.fastq.gz
+*.bam
+*.bai
+*.parquet
+
+# Params / config files (passed at runtime, not baked in)
+params.yml
+params_local.yml
+
+# Test artefacts
+tests/
+test.sh
+test_stub.sh
+
+# Scripts not needed inside the container
+setup.sh
+setup_local.sh
+run_local.sh
+submit.slurm
+submit_gcp.sh
+build_and_push.sh
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+.idea/
+.vscode/

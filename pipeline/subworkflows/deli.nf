@@ -5,23 +5,17 @@ nextflow.enable.dsl = 2
 // ============================================================================
 
 process GenerateDecodeYaml {
-    /*
-     * Build the DELi decode.yaml from params and publish it to out_dir.
-     * The generated filename encodes selection_id, target_id and date_ran.
-     */
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    val fastq_files  // list (or single string) of FASTQ paths
+    path fastq_file  // Path input (not val) for proper GCS staging
 
     output:
     path "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml", emit: yaml
 
     script:
     def yaml_name = "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml"
-    def files_py  = fastq_files instanceof List
-        ? "[" + fastq_files.collect { "\"${it}\"" }.join(", ") + "]"
-        : "[\"${fastq_files}\"]"
+    def files_py  = "[\"${fastq_file}\"]"  // Use the staged path directly
     def libs_py   = params.libraries instanceof List
         ? "[" + params.libraries.collect { "\"${it}\"" }.join(", ") + "]"
         : "[\"${params.libraries}\"]"
@@ -54,20 +48,10 @@ process GenerateDecodeYaml {
 }
 
 // ============================================================================
-// PROCESSES — adapted from DELi nextflow/nextflow.nf
-// https://github.com/Popov-Lab-UNC/DELi
-// Changes: added publishDir to WriteDecodeReport
+// PROCESSES
 // ============================================================================
 
 process ExtractSequenceFiles {
-    /*
-     * Extract sequence files, selection_id, and libraries from selection YAML
-     * Outputs:
-     * - selection_id: The selection ID from the selection config
-     * - libraries: Newline-separated list of library IDs
-     * - files: Newline-separated list of sequence file paths
-     */
-
     input:
     path selection_file
 
@@ -83,12 +67,10 @@ process ExtractSequenceFiles {
     with open("${selection_file}") as f:
         config = yaml.safe_load(f)
 
-    # Write selection_id
     selection_id = config.get('selection_id', 'unknown')
     with open('selection_id.txt', 'w') as f:
         f.write(selection_id + '\\n')
 
-    # Write sequence files
     sequence_files = config.get('sequence_files', [])
     with open('files.txt', 'w') as f:
         if isinstance(sequence_files, list):
@@ -99,47 +81,74 @@ process ExtractSequenceFiles {
 }
 
 process DecodeChunk {
-    /*
-     * Run deli decode run on a chunk of FASTQ
-     * Outputs one TSV file per chunk (no split-by-lib)
-     */
-    tag "${fastq_chunk.simpleName}"
+    tag "${fastq_chunk.name}"
 
     input:
-    path fastq_chunk
+    path fastq_chunk   // Path input ensures GCS staging
     path selection_file
     val prefix
     val deli_args
 
     output:
-    path "${prefix}_${fastq_chunk.simpleName}_decoded.tsv", emit: decoded_tsv
-    path "${prefix}_${fastq_chunk.simpleName}_decode_statistics.json", emit: decode_stats
+    path "${prefix}_${fastq_chunk.baseName}_decoded.tsv", emit: decoded_tsv
+    path "${prefix}_${fastq_chunk.baseName}_decode_statistics.json", emit: decode_stats
     path "deli.log", emit: deli_log
 
     script:
     """
+    echo "=== WORKING DIRECTORY CONTENTS ==="
+    ls -lah
+
+    echo ""
+    echo "=== INPUT FILE DETAILS ==="
+    echo "fastq_chunk path: ${fastq_chunk}"
+    echo "fastq_chunk name: ${fastq_chunk.name}"
+    echo "fastq_chunk baseName: ${fastq_chunk.baseName}"
+    echo "fastq_chunk size:"
+    ls -lh ${fastq_chunk} || echo "FILE NOT FOUND"
+    echo "fastq_chunk file type:"
+    file ${fastq_chunk} || echo "file command not available"
+
+    echo ""
+    echo "=== FASTQ PREVIEW (first 8 lines) ==="
+    head -n 8 ${fastq_chunk} || echo "CANNOT READ FASTQ"
+
+    echo ""
+    echo "=== SELECTION FILE DETAILS ==="
+    echo "selection_file path: ${selection_file}"
+    echo "selection_file name: ${selection_file.name}"
+    echo "selection_file content:"
+    cat ${selection_file} || echo "CANNOT READ YAML"
+
+    echo ""
+    echo "=== PREFIX & DELI_ARGS ==="
+    echo "prefix: ${prefix}"
+    echo "deli_args: ${deli_args}"
+
+    echo ""
+    echo "=== RUNNING DELI ==="
+
+
+    
     mkdir -p decoded_output
 
     deli ${deli_args} decode run \
         "${selection_file}" \
         "${fastq_chunk}" \
         --out-dir ./ \
-        --prefix "${prefix}_${fastq_chunk.simpleName}" \
+        --prefix "${prefix}_${fastq_chunk.baseName}" \
         --skip-report
     """
 
     stub:
     """
-    touch ${prefix}_${fastq_chunk.simpleName}_decoded.tsv
-    echo '{}' > ${prefix}_${fastq_chunk.simpleName}_decode_statistics.json
+    touch ${prefix}_${fastq_chunk.baseName}_decoded.tsv
+    echo '{}' > ${prefix}_${fastq_chunk.baseName}_decode_statistics.json
     touch deli.log
     """
 }
 
 process MergeDecodeStatistics {
-    /*
-     * Merge decode statistics JSON files from all chunks into a single JSON file with aggregated stats
-     */
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
@@ -166,10 +175,6 @@ process MergeDecodeStatistics {
 }
 
 process CollectDecodeChunks {
-    /*
-     * Collect all chunk decode outputs files into a single collected NDJSON file
-     */
-
     input:
     path("*_decoded.tsv", arity: '1..*')
     val prefix
@@ -180,7 +185,6 @@ process CollectDecodeChunks {
 
     script:
     """
-    # Run deli decode collect on all TSV files
     deli ${deli_args} decode collect \
         *_decoded.tsv \
         --out-loc "${prefix}_collected.ndjson"
@@ -193,10 +197,6 @@ process CollectDecodeChunks {
 }
 
 process CountChunk {
-    /*
-     * Count compounds from a chunk of the collected NDJSON file
-     * Input file contains up to 500,000 NDJSON lines
-     */
     tag "${ndjson_chunk.name}"
 
     input:
@@ -226,9 +226,6 @@ process CountChunk {
 }
 
 process CollectCountChunks {
-    /*
-     * Merge counted files from all chunks
-     */
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
@@ -241,7 +238,6 @@ process CollectCountChunks {
     script:
     """
     #!/usr/bin/env python
-
     import polars as pl
     files = sorted([f for f in "${counted_files}".split() if f.strip()])
     pl.scan_parquet(files).sink_parquet("${prefix}_counts.parquet")
@@ -254,9 +250,6 @@ process CollectCountChunks {
 }
 
 process SummarizeDecodeRun {
-    /*
-     * Summarize the decode run by merging the decode statistics with the final counts to produce a final decode summary JSON file
-     */
     publishDir "${params.out_dir}", mode: 'move'
 
     input:
@@ -283,9 +276,6 @@ process SummarizeDecodeRun {
 }
 
 process WriteDecodeReport {
-    /*
-     * Generate the decoding HTML report
-     */
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
@@ -317,13 +307,13 @@ process WriteDecodeReport {
 
 workflow DELI {
     take:
-    fastq_files  // val channel: list (or single string) of FASTQ paths
+    fastq_files  // Channel of Path objects
+    fastq_uri
 
     main:
-    // Generate decode.yaml from params and publish it to out_dir
-    selection_file_path = GenerateDecodeYaml(fastq_files).yaml.first()
+    // Generate decode.yaml — pass the actual Path, not a string
+    selection_file_path = GenerateDecodeYaml(fastq_uri).yaml.first()
 
-    // Validate potentially user-controlled path parameters to prevent shell injection
     def safePathPattern = ~/^[\w.\-\/]+$/
     if (params.deli_data_dir && !(params.deli_data_dir ==~ safePathPattern)) {
         error("Invalid characters in --deli_data_dir parameter")
@@ -332,7 +322,6 @@ workflow DELI {
         error("Invalid characters in --config_file parameter")
     }
 
-    // Build deli CLI arguments
     def deli_args = ""
     if (params.debug) {
         deli_args += " --debug"
@@ -354,12 +343,9 @@ workflow DELI {
         .map { final_prefix ?: it }
         .first()
 
-    fastq_chunks = extract.files
-        .splitText()
-        .map { it.trim() }
-        .filter { it }
-        .map { file(it) }
-        .splitFastq(by: params.chunk_size, file: true)
+    // CRITICAL FIX: Use the FASTQ Path from the input channel, NOT from files.txt
+    // The files.txt contains GCS paths which won't stage properly in downstream tasks
+    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true)
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
 
@@ -409,3 +395,5 @@ workflow DELI {
     summary = SummarizeDecodeRun.out.final_stats
     report  = WriteDecodeReport.out.report
 }
+
+

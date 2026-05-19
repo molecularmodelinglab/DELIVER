@@ -59,3 +59,6 @@ fi
 echo ""
 echo "Setup complete. Run the pipeline with:"
 echo "  bash run_local.sh"
+
+
+#need to install fastp

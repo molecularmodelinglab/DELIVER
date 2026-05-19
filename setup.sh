@@ -9,10 +9,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARAMS_FILE="${SCRIPT_DIR}/params.yml"
 
+
 # ---------------------------------------------------------------------------
 # 1. Python environment
 # ---------------------------------------------------------------------------
-module load python/3.12.4
+# module load python/3.12.4
+echo "Using Python: $(python3 --version)"
 
 # ---------------------------------------------------------------------------
 # 2. Create DELIVER venv and install uv into it

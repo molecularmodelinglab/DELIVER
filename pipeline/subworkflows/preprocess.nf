@@ -1,34 +1,76 @@
+#!/usr/bin/env nextflow
+
+/**
+ * ==============================================================================
+ * PREPROCESS SUBWORKFLOW
+ * ==============================================================================
+ * Handles:
+ * - Input file resolution (GCS or local)
+ * - Concatenation of multiple R1/R2 files
+ * - Paired-end merging (fastp) or single-end decompression
+ * - Output: uncompressed .fastq ready for DELI
+ *
+ * GCS-specific notes:
+ * - Input paths from GCS (gs://bucket/file.fastq.gz) are auto-staged
+ * - fastp reads .gz files directly (no upfront decompression needed)
+ * - All output files written to container work dir, then published to out_dir
+ * ==============================================================================
+ */
+
 nextflow.enable.dsl = 2
 
-// Preprocessing subworkflow.
-// Steps:
-//   1. Concatenate lanes (multiple R1 / R2 files) — files stay compressed if they were .gz
-//   2. If paired-end (read_2 provided): fastp merges R1+R2 (reads .gz natively) → merged.fastq
-//   3. If single-end: decompress the concatenated file if needed → R1.fastq
-//
-// Only the final merged/decompressed FASTQ is published. Intermediate files are not saved.
-// fastp QC reports (HTML + JSON) are published to out_dir/qc.
+// ============================================================================
+// CONCAT PROCESS
+// ============================================================================
+// Concatenates multiple R1 or R2 files into a single .fastq or .fastq.gz
+// Preserves compression state: if all inputs are .gz, output is .gz
+// Works with both GCS and local paths (Nextflow stages GCS files automatically)
 
-// ---------------------------------------------------------------------------
-// CONCAT
-//   Concatenates one or more FASTQ files. Files stay compressed if they were .gz —
-//   gzip format supports concatenation natively (cat a.gz b.gz > combined.gz is valid).
-//   Not published — intermediate file used only within the workflow.
-// ---------------------------------------------------------------------------
 process CONCAT {
+    tag "${read_type}"
+
     input:
-    tuple val(read_type), path(files)  // ("R1"|"R2", one or more files — .fastq or .fastq.gz)
+    tuple val(read_type), path(files)
+    // read_type: "R1" or "R2"
+    // files: one or more .fastq/.fastq.gz (Nextflow stages from GCS if needed)
 
     output:
     tuple val(read_type), path("${read_type}.fastq*"), emit: fastq
-    // output extension matches input: .fastq.gz if inputs were gz, .fastq otherwise
+    // Output matches input compression: .fastq.gz if inputs were gz, .fastq otherwise
 
     script:
     """
+    echo "=== CONCAT received ${files instanceof List ? files.size() : 1} file(s) for ${read_type} ==="
+    echo "Files: ${files}"
+
+
+    # Determine if input files are gzipped
     first=\$(echo "${files}" | tr ' ' '\\n' | head -1)
+
+    # Print line/read count for each input file
+    echo "=== Input file line counts ==="
+    for f in ${files}; do
+        if [[ "\$f" == *.gz ]]; then
+            lines=\$(zcat "\$f" | wc -l)
+        else
+            lines=\$(wc -l < "\$f")
+        fi
+        reads=\$(( lines / 4 ))
+        echo "  \$f — lines: \$lines, reads: \$reads"
+    done
+    echo "=============================="
+
+
+
+
+    
     if [[ "\$first" == *.gz ]]; then
+        # All inputs are gzipped — concatenate directly
+        echo "Concatenating gzipped files: ${files}"
         cat ${files} > ${read_type}.fastq.gz
     else
+        # Inputs are uncompressed
+        echo "Concatenating uncompressed files: ${files}"
         cat ${files} > ${read_type}.fastq
     fi
     """
@@ -39,15 +81,19 @@ process CONCAT {
     """
 }
 
-// ---------------------------------------------------------------------------
-// DECOMPRESS
-//   Decompresses a .fastq.gz to .fastq for single-end path.
-//   If input is already uncompressed, just renames it.
-//   Not published — DELI uses the file directly from the work dir.
-// ---------------------------------------------------------------------------
+// ============================================================================
+// DECOMPRESS PROCESS
+// ============================================================================
+// Decompresses .fastq.gz to .fastq for single-end path.
+// If input is already uncompressed, just renames it.
+// Not published — DELI reads directly from container work dir.
+
 process DECOMPRESS {
+    tag "decompress"
+
     input:
     path gz_file
+    // File object staging from GCS if needed (Nextflow automatic)
 
     output:
     path "merged.fastq", emit: fastq
@@ -55,9 +101,16 @@ process DECOMPRESS {
     script:
     """
     if [[ "${gz_file}" == *.gz ]]; then
+        echo "Decompressing: ${gz_file}"
         gunzip -c "${gz_file}" > merged.fastq
     else
+        echo "File already uncompressed: ${gz_file}"
         mv "${gz_file}" merged.fastq
+    fi
+    
+    # Verify output
+    if [[ -f merged.fastq ]]; then
+        echo "Output file size: \$(wc -c < merged.fastq) bytes"
     fi
     """
 
@@ -67,18 +120,13 @@ process DECOMPRESS {
     """
 }
 
-// ---------------------------------------------------------------------------
-// FASTP_MERGE
-//   Merges paired-end R1 + R2 into a single-end .fastq using fastp.
-//   Reads .gz natively — no upfront decompression needed.
-//   Publishes QC reports to out_dir/qc.
-// ---------------------------------------------------------------------------
+
 process FASTP_MERGE {
     publishDir "${params.out_dir}/qc", mode: 'copy'
 
     input:
-    path r1   // .fastq or .fastq.gz
-    path r2   // .fastq or .fastq.gz
+    path r1
+    path r2
 
     output:
     path "merged.fastq", emit: fastq
@@ -86,17 +134,37 @@ process FASTP_MERGE {
     path "fastp.json",   emit: json
 
     script:
+    def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
+    def r2_ext = r2.name.endsWith('.gz') ? 'gz' : 'fastq'
     """
+    ln -s ${r1} input_R1.${r1_ext}
+    ln -s ${r2} input_R2.${r2_ext}
+
+    # Count input lines (divide by 4 for FASTQ records)
+    r1_lines=\$(zcat -f input_R1.${r1_ext} | wc -l)
+    r2_lines=\$(zcat -f input_R2.${r2_ext} | wc -l)
+    echo "Input R1 lines: \$r1_lines (reads: \$(( r1_lines / 4 )))"
+    echo "Input R2 lines: \$r2_lines (reads: \$(( r2_lines / 4 )))"
+
+
+
+
     fastp \
-        --in1 ${r1} \
-        --in2 ${r2} \
+        --in1 input_R1.${r1_ext} \
+        --in2 input_R2.${r2_ext} \
         -m \
         --merged_out merged.fastq \
         --correction \
         -w ${params.fastp_threads} \
         -h fastp.html \
-        -j fastp.json
+        -j fastp.json \
+
+
+    merged_lines=\$(wc -l < merged.fastq)
+    echo "Output merged.fastq lines: \$merged_lines (reads: \$(( merged_lines / 4 )))"
+    echo "Output merged.fastq size: \$(wc -c < merged.fastq) bytes"
     """
+    
 
     stub:
     """
@@ -104,36 +172,89 @@ process FASTP_MERGE {
     """
 }
 
-// ---------------------------------------------------------------------------
-// WORKFLOW
-// ---------------------------------------------------------------------------
+
+
+// ============================================================================
+// PREPROCESS WORKFLOW
+// ============================================================================
+
 workflow PREPROCESS {
     main:
-    r1_files = params.read_1 instanceof List
-        ? params.read_1.collect { file(it) }
-        : [file(params.read_1)]
+
+    // ========================================================================
+    // Step 1: Resolve input R1 files
+    // ========================================================================
+    // Use Channel.fromPath — preserves gs:// URIs correctly.
+    // file() at workflow scope strips the gs:// scheme to a local path.
+
+    r1_ch = (params.read_1 instanceof List)
+        ? Channel.fromPath(params.read_1)
+        : Channel.fromPath(params.read_1.toString().split(',').collect { it.trim() })
+
+    // Collect back into a list for CONCAT (which expects a list, not a channel of files)
+    r1_files = r1_ch.collect()
+
+    // ========================================================================
+    // Step 2: Determine execution path (paired-end vs single-end)
+    // ========================================================================
 
     if (params.read_2) {
-        r2_files = params.read_2 instanceof List
-            ? params.read_2.collect { file(it) }
-            : [file(params.read_2)]
 
-        // R1 and R2 concatenated via one channel — avoids DSL2 duplicate-process error
-        reads_ch = Channel.of(["R1", r1_files], ["R2", r2_files])
+        r2_ch = (params.read_2 instanceof List)
+            ? Channel.fromPath(params.read_2)
+            : Channel.fromPath(params.read_2.toString().split(',').collect { it.trim() })
+
+        r2_files = r2_ch.collect()
+
+        // reads_ch = Channel.of("R1").combine(r1_files).mix(
+        //            Channel.of("R2").combine(r2_files))
+
+        r1_ch_tuple = r1_files.map { files -> tuple("R1", files) }
+        r2_ch_tuple = r2_files.map { files -> tuple("R2", files) }
+        reads_ch = r1_ch_tuple.mix(r2_ch_tuple)
+
+        reads_ch.view { type, files -> "DEBUG reads_ch → type=${type}, nFiles=${files instanceof List ? files.size() : 1}, files=${files}" }
+
+
         concat_out = CONCAT(reads_ch)
 
         r1_fastq = concat_out.fastq.filter { it[0] == "R1" }.map { it[1] }
         r2_fastq = concat_out.fastq.filter { it[0] == "R2" }.map { it[1] }
 
-        // fastp reads .gz natively and outputs uncompressed merged.fastq directly
         fastq_out = FASTP_MERGE(r1_fastq, r2_fastq).fastq
+
+        // Logging — done after channel ops so paths are still URI strings
+        def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
+        def r2_source = params.read_2.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
+        def r1_list = (params.read_1 instanceof List) ? params.read_1 : params.read_1.toString().split(',').collect { it.trim() }
+        def r2_list = (params.read_2 instanceof List) ? params.read_2 : params.read_2.toString().split(',').collect { it.trim() }
+        log.info "========================================"
+        log.info "PREPROCESS: Paired-End Mode"
+        log.info "========================================"
+        log.info "R1 source : ${r1_source} (${r1_list.size()} file(s))"
+        log.info "R2 source : ${r2_source} (${r2_list.size()} file(s))"
+        r1_list.eachWithIndex { f, i -> log.info "  R1[${i+1}] ${f}" }
+        r2_list.eachWithIndex { f, i -> log.info "  R2[${i+1}] ${f}" }
+        log.info "Merging with fastp..."
+        log.info "========================================"
+
     } else {
-        reads_ch = Channel.of(["R1", r1_files])
+
+        reads_ch = Channel.of("R1").combine(r1_files)
         concat_out = CONCAT(reads_ch)
-        // Decompress at the end if needed — only for single-end path
         fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
+
+        def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
+        def r1_list = (params.read_1 instanceof List) ? params.read_1 : params.read_1.toString().split(',').collect { it.trim() }
+        log.info "========================================"
+        log.info "PREPROCESS: Single-End Mode"
+        log.info "========================================"
+        log.info "R1 source : ${r1_source} (${r1_list.size()} file(s))"
+        r1_list.eachWithIndex { f, i -> log.info "  R1[${i+1}] ${f}" }
+        log.info "Decompressing..."
+        log.info "========================================"
     }
 
     emit:
-    fastq = fastq_out  // single uncompressed FASTQ ready for DELI
+    fastq = fastq_out
 }
