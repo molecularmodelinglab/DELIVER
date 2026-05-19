@@ -212,12 +212,12 @@ DELIVER/
 │       └── postprocess/              # standalone Python CLI scripts called by NF
 │           ├── columns.py            # column name constants
 │           ├── common.py             # shared utilities (validate, load inputs)
-│           ├── metrics.py            # metrics (binomial z-score)
+│           ├── metrics.py            # metrics (binomial z-score, polyO)
 │           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── normalize.py          # normalize DELi counts → common format
 │           ├── deduplicate.py        # deduplication + aggregation
-│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global)
-│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …)
+│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
+│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
 └── scripts/
     └── convert_hitgen/               # Hitgen TSV → DELi format converter
 ```
@@ -244,8 +244,8 @@ This creates `libraries/` and `building_blocks/` inside `--output-dir`, which yo
 | Build library dictionary (library_dict.json) | implemented |
 | Normalize DELi counts → common format + validation | implemented |
 | Deduplication + aggregation | TODO |
-| Per-compound enrichment scores (z_score_lib, z_score_global) | implemented |
-| Disynthon counts + statistics (AB, BC, AC, …) | implemented |
+| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) | implemented |
+| Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
 
 ## params.yml
 
