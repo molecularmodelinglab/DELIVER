@@ -25,7 +25,7 @@ def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:
         lib_results.append(
             df_lib.with_columns(
                 z_score(df_lib[CORRECTED_COUNT], n).alias(Z_SCORE_LIB),
-                polyo.score(polyo.raw(df_lib[RAW_COUNT])).alias(POLYO),
+                polyo.score(polyo.raw(df_lib[CORRECTED_COUNT])).alias(POLYO),
             )
         )
     df_result = pl.concat(lib_results)

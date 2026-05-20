@@ -53,9 +53,9 @@ class PolyO:
             p = _poisson.pmf(k, mu)
         return k
 
-    def raw(self, raw_count: pl.Series) -> pl.Series:
+    def raw(self, count: pl.Series) -> pl.Series:
         """Raw polyO: -log10(P(count; d)) under Poisson(d) null."""
-        return pl.Series(-_poisson.logpmf(raw_count.to_numpy(), self.d) / math.log(10))
+        return pl.Series(-_poisson.logpmf(count.to_numpy(), self.d) / math.log(10))
 
     def score(self, raw: pl.Series) -> pl.Series:
         """Normalized polyO score relative to calibrated baseline."""

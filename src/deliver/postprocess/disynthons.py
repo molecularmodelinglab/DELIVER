@@ -89,7 +89,7 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
         polyo = PolyO(d, df_lib_orig[RAW_COUNT].sum(), df_lib_orig.filter(pl.col(RAW_COUNT) > 0).height, n_possible, _total_disynthons(lib))
 
         # sum of per-compound polyo_raw within each disynthon = polyo_raw_disynthon
-        df_with_raw = df_lib_orig.with_columns(polyo.raw(df_lib_orig[RAW_COUNT]).alias(_POLYO_RAW))
+        df_with_raw = df_lib_orig.with_columns(polyo.raw(df_lib_orig[CORRECTED_COUNT]).alias(_POLYO_RAW))
         agg = _aggregate(df_with_raw, col1, col2)
         results.append(_add_lib_statistics(agg, lib, col1, col2, polyo))
 

@@ -321,6 +321,27 @@ class TestEnrichment:
         assert result["polyo"][0] == pytest.approx(0.369535, rel=1e-4)
         assert result["polyo"][1] == pytest.approx(0.077659, rel=1e-4)
 
+    def test_polyo_uses_corrected_count(self, tmp_path):
+        # raw_count != corrected_count: calibration uses raw, PMF uses corrected.
+        # d = (10+4)/4 = 3.5 (from raw); polyo PMF uses corrected [8, 2].
+        # If raw were used instead: polyo would be 0.302210 and 0.082903 (different).
+        df = pl.DataFrame({
+            "compound_id":     ["LIB-1", "LIB-2"],
+            "library_id":      ["LIB",   "LIB"],
+            "raw_count":       [10, 4],
+            "corrected_count": [8,  2],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib_dict = tmp_path / "lib.json"
+        lib_dict.write_text(json.dumps({"LIB": {"A": 4}}))
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
+        result = pl.read_parquet(out).sort("compound_id")
+
+        assert result["polyo"][0] == pytest.approx(0.203030, rel=1e-4)
+        assert result["polyo"][1] == pytest.approx(0.083929, rel=1e-4)
+
     def test_output_row_count_unchanged(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
@@ -545,6 +566,30 @@ class TestDisynthons:
 
         assert df["polyo"][0] == pytest.approx(0.163592, rel=1e-4)
         assert df["polyo"][1] == pytest.approx(0.115179, rel=1e-4)
+
+    def test_polyo_uses_corrected_count(self, tmp_path):
+        # raw_count != corrected_count: d = 8/4 = 2.0 from raw; PMF uses corrected.
+        # A1-B1: corrected [3,1] → polyo 0.133047 (not 0.163592 which raw [4,2] would give).
+        # A2-B1: corrected == raw [1,1] → same as always, 0.115179.
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-2-1-1", "L01-2-1-2"],
+            "library_id":      ["L01"] * 4,
+            "A":               ["1", "1", "2", "2"],
+            "B":               ["1", "1", "1", "1"],
+            "C":               ["1", "2", "1", "2"],
+            "raw_count":       [4, 2, 1, 1],
+            "corrected_count": [3, 1, 1, 1],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps({"L01": {"A": 2, "B": 1, "C": 2}}))
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        result = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+
+        assert result["polyo"][0] == pytest.approx(0.133047, rel=1e-4)
+        assert result["polyo"][1] == pytest.approx(0.115179, rel=1e-4)
 
 
 class TestDisynthonsComprehensive:
