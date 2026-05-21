@@ -6,6 +6,7 @@ import math
 import polars as pl
 import pytest
 
+from deliver.postprocess.add_smiles import main as add_smiles
 from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate
@@ -212,6 +213,96 @@ class TestBuildLibraryDict:
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
             build_library_dict([])
+
+
+class TestAddSmiles:
+    def _make_input(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1", "L01-2-1", "L02-1-1"],
+            "library_id":      ["L01", "L01", "L02"],
+            "A":               ["1", "2", "1"],
+            "B":               ["1", "1", "1"],
+            "raw_count":       [3, 1, 2],
+            "corrected_count": [3, 1, 2],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        return inp
+
+    def _make_smiles_file(self, tmp_path, lib_id: str, entries: list[tuple]) -> str:
+        path = tmp_path / f"{lib_id}_smiles.parquet"
+        pl.DataFrame({"compound": [e[0] for e in entries],
+                      "SMILES":   [e[1] for e in entries]}).write_parquet(path)
+        return str(path)
+
+    def test_adds_smiles_column(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert "SMILES" in df.columns
+
+    def test_correct_smiles_assigned(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        df = pl.read_parquet(out).sort("compound_id")
+        assert df.filter(pl.col("compound_id") == "L01-1-1")["SMILES"][0] == "CCO"
+        assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] == "CCC"
+
+    def test_missing_library_gets_null(self, tmp_path):
+        # L02 not in smiles_map → SMILES should be null
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert df.filter(pl.col("library_id") == "L02")["SMILES"][0] is None
+
+    def test_custom_column_names(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        path = tmp_path / "L01_smiles.parquet"
+        pl.DataFrame({"cpd_id": ["L01-1-1", "L01-2-1"], "smi": ["CCO", "CCC"]}).write_parquet(path)
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(path)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--compound-col", "cpd_id", "--smiles-col", "smi", "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert "smi" in df.columns
+        assert df.filter(pl.col("compound_id") == "L01-1-1")["smi"][0] == "CCO"
+
+    def test_row_count_unchanged(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        assert len(pl.read_parquet(out)) == len(pl.read_parquet(inp))
+
+    def test_missing_smiles_raises_error(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        # Only one of the two L01 compounds has a SMILES entry
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        with pytest.raises(ValueError, match="L01"):
+            add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
 
 
 class TestDeduplicate:

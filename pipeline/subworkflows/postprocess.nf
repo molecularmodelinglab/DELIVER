@@ -121,11 +121,34 @@ process DEDUPLICATE {
     """
 }
 
-// ============================================================================
-// ENRICHMENT PROCESS
-// ============================================================================
-// Performs enrichment analysis on deduplicated compounds
-// Calls Python script: src/deliver/postprocess/enrichment.py
+process ADD_SMILES {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path normalized_parquet
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    def smiles_map   = groovy.json.JsonOutput.toJson(params.smiles.files)
+    def compound_col = params.smiles.compound_col ?: "compound"
+    def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
+    """
+    echo '${smiles_map}' > smiles_map.json
+    python ${projectDir}/../src/deliver/postprocess/add_smiles.py \
+        --input        ${normalized_parquet} \
+        --smiles-map   smiles_map.json \
+        --compound-col ${compound_col} \
+        --smiles-col   ${smiles_col} \
+        --output       normalized.parquet
+    """
+
+    stub:
+    """
+    cp ${normalized_parquet} normalized.parquet
+    """
+}
 
 process ENRICHMENT {
     tag "enrichment"
@@ -182,8 +205,13 @@ workflow POSTPROCESS {
     // Step 1: Normalize
     NORMALIZE(counts)
 
-    // Step 2: Deduplicate
-    DEDUPLICATE(NORMALIZE.out)
+    // Step 2: Add SMILES (optional) and Deduplicate
+    if (params.smiles) {
+        ADD_SMILES(NORMALIZE.out)
+        DEDUPLICATE(ADD_SMILES.out)
+    } else {
+        DEDUPLICATE(NORMALIZE.out)
+    }
 
     // Step 3: Enrichment analysis
     ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
