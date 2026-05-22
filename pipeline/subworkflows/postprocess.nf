@@ -60,7 +60,7 @@ process DEDUPLICATE {
     
     echo "Input file size: \$(du -h ${counts_parquet} | cut -f1)"
 
-    python /opt/deliver/src/deliver/postprocess/deduplicate.py \\
+    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \\
         --input  ${counts_parquet} \\
         --output deduplicated.parquet \\
         ${deli_data_arg}
@@ -117,7 +117,7 @@ process ENRICHMENT {
     
     echo "Input file size: \$(du -h ${deduplicated_parquet} | cut -f1)"
 
-    python /opt/deliver/src/deliver/postprocess/enrichment.py \\
+    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \\
         --input  ${deduplicated_parquet} \\
         --output enrichment.parquet \\
         ${deli_data_arg}
