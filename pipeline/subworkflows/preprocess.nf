@@ -40,30 +40,8 @@ process CONCAT {
 
     script:
     """
-    echo "=== CONCAT received ${files instanceof List ? files.size() : 1} file(s) for ${read_type} ==="
-    echo "Files: ${files}"
-
-
     # Determine if input files are gzipped
     first=\$(echo "${files}" | tr ' ' '\\n' | head -1)
-
-    # Print line/read count for each input file
-    echo "=== Input file line counts ==="
-    for f in ${files}; do
-        if [[ "\$f" == *.gz ]]; then
-            lines=\$(zcat "\$f" | wc -l)
-        else
-            lines=\$(wc -l < "\$f")
-        fi
-        reads=\$(( lines / 4 ))
-        echo "  \$f — lines: \$lines, reads: \$reads"
-    done
-    echo "=============================="
-
-
-
-
-    
     if [[ "\$first" == *.gz ]]; then
         # All inputs are gzipped — concatenate directly
         echo "Concatenating gzipped files: ${files}"
@@ -206,15 +184,9 @@ workflow PREPROCESS {
 
         r2_files = r2_ch.collect()
 
-        // reads_ch = Channel.of("R1").combine(r1_files).mix(
-        //            Channel.of("R2").combine(r2_files))
-
         r1_ch_tuple = r1_files.map { files -> tuple("R1", files) }
         r2_ch_tuple = r2_files.map { files -> tuple("R2", files) }
         reads_ch = r1_ch_tuple.mix(r2_ch_tuple)
-
-        reads_ch.view { type, files -> "DEBUG reads_ch → type=${type}, nFiles=${files instanceof List ? files.size() : 1}, files=${files}" }
-
 
         concat_out = CONCAT(reads_ch)
 

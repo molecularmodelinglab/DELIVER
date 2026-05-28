@@ -96,40 +96,6 @@ process DecodeChunk {
 
     script:
     """
-    echo "=== WORKING DIRECTORY CONTENTS ==="
-    ls -lah
-
-    echo ""
-    echo "=== INPUT FILE DETAILS ==="
-    echo "fastq_chunk path: ${fastq_chunk}"
-    echo "fastq_chunk name: ${fastq_chunk.name}"
-    echo "fastq_chunk baseName: ${fastq_chunk.baseName}"
-    echo "fastq_chunk size:"
-    ls -lh ${fastq_chunk} || echo "FILE NOT FOUND"
-    echo "fastq_chunk file type:"
-    file ${fastq_chunk} || echo "file command not available"
-
-    echo ""
-    echo "=== FASTQ PREVIEW (first 8 lines) ==="
-    head -n 8 ${fastq_chunk} || echo "CANNOT READ FASTQ"
-
-    echo ""
-    echo "=== SELECTION FILE DETAILS ==="
-    echo "selection_file path: ${selection_file}"
-    echo "selection_file name: ${selection_file.name}"
-    echo "selection_file content:"
-    cat ${selection_file} || echo "CANNOT READ YAML"
-
-    echo ""
-    echo "=== PREFIX & DELI_ARGS ==="
-    echo "prefix: ${prefix}"
-    echo "deli_args: ${deli_args}"
-
-    echo ""
-    echo "=== RUNNING DELI ==="
-
-
-    
     mkdir -p decoded_output
 
     deli ${deli_args} decode run \
