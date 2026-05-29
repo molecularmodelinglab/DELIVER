@@ -1,3 +1,7 @@
+# Local environment variables (GCP project, bucket, SA, etc.) — do not commit
+.env
+.vscode/
+
 # Local parameter files with real paths — do not commit
 params_*.yml
 
@@ -24,3 +28,4 @@ __pycache__/
 
 # Generated output
 results/
+data/

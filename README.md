@@ -20,6 +20,112 @@ sbatch submit.slurm \
   --log-dir     /path/to/logs
 ```
 
+## Quick start — GCP Cloud Batch
+
+Runs the pipeline on Google Cloud Batch using the `gcp` profile in `pipeline/nextflow.config`.
+
+Requires: `nextflow`, `gcloud` CLI (authenticated via `gcloud auth application-default login`), `docker`, `java`, `python3` with `pyyaml`, and a GCS bucket + GCP project you have access to.
+
+### 1. Create `.env`
+
+Both `submit_gcp.sh` and `build_and_push.sh` read all GCP configuration from a `.env` file at the repo root. It is gitignored — your project IDs, buckets, and service account stay local.
+
+Create `DELIVER/.env` with these variables (no spaces around `=`, use quotes for values with special characters):
+
+```bash
+# GCP project & region
+PROJECT="my-gcp-project"
+REGION="us-central1"
+
+# Storage
+BUCKET="my-gcs-bucket"
+WORK_DIR="gs://my-gcs-bucket/deliver-work/"
+LOG_DIR="gs://my-gcs-bucket/deliver-logs"
+
+# Pipeline run config (relative paths are resolved from repo root)
+PARAMS_FILE="params.yml"
+
+# Container image (Artifact Registry)
+REPO_NAME="deliver-repo"
+IMAGE_NAME="deliver"
+TAG="latest"
+CONTAINER_REGISTRY="us-central1-docker.pkg.dev/my-gcp-project/deliver-repo/deliver:latest"
+
+# Cloud Batch service account
+SERVICE_ACCOUNT="my-sa@my-gcp-project.iam.gserviceaccount.com"
+```
+
+| Variable | Used by | What to set |
+|----------|---------|-------------|
+| `PROJECT` | both | GCP project ID |
+| `REGION` | both | GCP region (e.g. `us-central1`) |
+| `BUCKET` | submit | GCS bucket name (no `gs://` prefix) |
+| `WORK_DIR` | submit | GCS path for Nextflow work directory |
+| `LOG_DIR` | submit | Local or GCS path for launcher logs |
+| `PARAMS_FILE` | submit | Path to your `params.yml` |
+| `REPO_NAME` | build | Artifact Registry repository name |
+| `IMAGE_NAME` | build | Docker image name |
+| `TAG` | build | Docker image tag |
+| `CONTAINER_REGISTRY` | submit | Full image URI (must match `REGION`/`PROJECT`/`REPO_NAME`/`IMAGE_NAME`/`TAG`) |
+| `SERVICE_ACCOUNT` | submit | Service account email used by Cloud Batch jobs |
+
+If `.env` is missing, both scripts fail immediately with a clear message — there are no hardcoded fallbacks.
+
+### 2. Build & push the Docker image
+
+Cloud Batch jobs pull the pipeline image from Artifact Registry. `build_and_push.sh` enables the Artifact Registry API, creates the repository (idempotent), configures Docker auth, builds the image from the repo's `Dockerfile`, and pushes it.
+
+Run this once before your first submission, and any time pipeline code or dependencies change:
+
+```bash
+chmod +x build_and_push.sh
+./build_and_push.sh                        # uses values from .env
+./build_and_push.sh --tag 1.0.0            # override TAG for this run
+```
+
+CLI flags `--project`, `--region`, and `--tag` override the corresponding `.env` values. The script prints the full image URI on success.
+
+### 3. (Optional) Sanity-check GCP setup
+
+Before committing to a full pipeline run, run `pipeline/gcp_sanity_check.nf` to verify that the container image, GCS access, and required tools (Python deps, `deli`, `fastp`, postprocess scripts, system tools) all work on a real Cloud Batch VM. Each check runs as its own parallel Cloud Batch job and the run exits non-zero on the first failure with a clear message.
+
+```bash
+nextflow run pipeline/gcp_sanity_check.nf \
+    -c pipeline/nextflow.config \
+    -profile gcp \
+    -w gs://YOUR_BUCKET/deliver-work \
+    --project YOUR_PROJECT \
+    --bucket  YOUR_BUCKET \
+    --region  us-central1
+```
+
+| Flag | Value |
+|------|-------|
+| `-w` | GCS path Nextflow uses as its work directory (matches `WORK_DIR` in `.env`) |
+| `--project` | GCP project ID (matches `PROJECT` in `.env`) |
+| `--bucket` | GCS bucket name, no `gs://` prefix (matches `BUCKET` in `.env`) |
+| `--region` | GCP region, e.g. `us-central1` (matches `REGION` in `.env`) |
+
+A successful run ends with `ALL CHECKS PASSED — ready for pipeline run`. Once this passes, proceed to step 4.
+
+### 4. Submit
+
+```bash
+bash submit_gcp.sh                # uses values from .env
+bash submit_gcp.sh --resume       # resume after failure
+```
+
+CLI flags `--work-dir`, `--params-file`, `--log-dir`, `--project`, `--bucket`, `--region` override the corresponding `.env` values, e.g.:
+
+```bash
+bash submit_gcp.sh \
+  --project     my-other-project \
+  --bucket      my-other-bucket \
+  --params-file /path/to/other_params.yml
+```
+
+On a successful run, the work directory in GCS is automatically deleted; on failure it is preserved for debugging.
+
 ## Quick start — local Mac
 
 Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and [Nextflow](https://www.nextflow.io/docs/latest/install.html).

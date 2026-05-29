@@ -1,38 +1,24 @@
 # DELIVER pipeline parameters
-# This is the only file you need to edit before running the pipeline.
-#
-# The pipeline detects the run mode automatically:
-#   read_1 set → FASTQ input (preprocess → DELi → postprocessing)
-#   counts_file set   → counts.parquet input (postprocessing only)
-#
-# Usage:
-#   sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR
-#   Add --resume to resume after failure
 
-# -----------------------------------------------------------------------
-# INPUT — change for every run
-# -----------------------------------------------------------------------
-
-# read_1: sequencing file(s) for read 1 (one or more lanes, .fastq or .fastq.gz)
-# read_2: sequencing file(s) for read 2 — paired-end only; omit or set null for single-end
-#         Set read_1/read_2 OR counts_file, not both.
 read_1:
-  - "/path/to/sample_L001_R1.fastq.gz"
-  - "/path/to/sample_L002_R1.fastq.gz"
+  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R1_001.1000000.fastq.gz"
+  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R1_001.1000000.fastq.gz"
+
 read_2:
-  - "/path/to/sample_L001_R2.fastq.gz"
-  - "/path/to/sample_L002_R2.fastq.gz"
+
+  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz
+  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz
+
 
 # out_dir: directory where all results will be written
-out_dir: "/path/to/results"
+out_dir: gs://deliver-process/temp-processed-files
 
 # counts_file: path to a pre-computed counts.parquet — skips decoding entirely,
 #              runs postprocessing only. Set instead of read_1/read_2.
 counts_file: null
 
-# deli_data_dir: path to the DELi data directory containing library definitions,
-#                building block tables, etc. (see DELi docs for structure)
-deli_data_dir: "/path/to/deli_data"
+
+deli_data_dir: /opt/deli_data/buildingblocks
 
 # -----------------------------------------------------------------------
 # SELECTION METADATA — written into the generated decode.yaml and used to
@@ -41,16 +27,16 @@ deli_data_dir: "/path/to/deli_data"
 
 # selection_id: short identifier for this selection experiment
 #               (used as prefix for all output files)
-selection_id: "my_selection"
+selection_id: "my_selection_test"
 
 # target_id: name of the target protein
-target_id: "my_target"
+target_id: "WDR91_test"
 
 # selection_condition: free-text description of selection conditions (e.g. "10nM", "-")
 selection_condition: "-"
 
 # date_ran: date the selection was run (YYYY-MM-DD)
-date_ran: "2024-01-01"
+date_ran: "2026-05-01"
 
 # additional_info: any extra notes to store in the decode.yaml
 additional_info: ""
@@ -60,6 +46,54 @@ additional_info: ""
 libraries:
   - "L01"
   - "L02"
+  - "L03"
+  - "L04"
+  - "L05"
+  - "L06"
+  - "L07"
+  - "L08"
+  - "L09"
+  - "L10"
+  - "L11"
+  - "L12"
+  - "L13"
+  - "L14"
+  - "L15"
+  - "L16"
+  - "L17"
+  - "L18"
+  - "L19"
+  - "L20"
+  - "L21"
+  - "L22"
+  - "L23"
+  - "L24"
+  - "L25"
+  - "L26"
+  - "L27"
+  - "L28"
+  - "L29"
+  - "L30"
+  - "L31"
+  - "L32"
+  - "L33"
+  - "L34"
+  - "L35"
+  - "L36"
+  - "L37"
+  - "L38"
+  - "L39"
+  - "L40"
+  - "L41"
+  - "L42"
+  - "L43"
+  - "L44"
+  - "L45"
+  - "L46"
+  - "L47"
+  - "L48"
+  - "L49"
+  - "L50"
 
 # -----------------------------------------------------------------------
 # DECODE SETTINGS — defaults work for most cases; change only if needed
@@ -91,7 +125,7 @@ wiggle: "YES"
 # -----------------------------------------------------------------------
 
 # deli_dir: path to the DELi repository — used by setup.sh to install DELi into .venv
-deli_dir: "/path/to/DELi"
+deli_dir: "deli-chem"
 
 # chunk_size: number of reads per FASTQ chunk sent to each decode job
 chunk_size: 1000000
