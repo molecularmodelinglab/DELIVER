@@ -7,6 +7,7 @@ import polars as pl
 import pytest
 
 from deliver.postprocess.add_smiles import main as add_smiles
+from deliver.postprocess.merge_smiles import main as merge_smiles_cli
 from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate
@@ -303,6 +304,124 @@ class TestAddSmiles:
         out = tmp_path / "out.parquet"
         with pytest.raises(ValueError, match="L01"):
             add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+
+    def test_library_flag_restricts_to_one_library(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--library", "L01", "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert set(df["library_id"].to_list()) == {"L01"}
+        assert len(df) == 2
+
+
+class TestMergeSmiles:
+    def _write_orig(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1", "L01-2-1", "L02-1-1"],
+            "library_id":      ["L01",     "L01",     "L02"],
+            "raw_count":       [3,         1,         2],
+            "corrected_count": [3,         1,         2],
+        })
+        p = tmp_path / "normalized.parquet"
+        df.write_parquet(p)
+        return p
+
+    def _write_partial(self, tmp_path, name, data):
+        df = pl.DataFrame(data)
+        p = tmp_path / f"{name}.parquet"
+        df.write_parquet(p)
+        return p
+
+    def test_row_count_preserved(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        assert len(pl.read_parquet(out)) == 3
+
+    def test_covered_smiles_present(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert df.filter(pl.col("compound_id") == "L01-1-1")["SMILES"][0] == "CCO"
+        assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] == "CCC"
+
+    def test_uncovered_library_gets_null(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert df.filter(pl.col("library_id") == "L02")["SMILES"][0] is None
+
+    def test_all_covered_no_nulls(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        p1 = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        p2 = self._write_partial(tmp_path, "L02", {
+            "compound_id": ["L02-1-1"], "library_id": ["L02"],
+            "raw_count": [2], "corrected_count": [2], "SMILES": ["c1ccccc1"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(p1), str(p2), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert df["SMILES"].null_count() == 0
+
+    def test_multiple_uncovered_libraries(self, tmp_path):
+        df_orig = pl.DataFrame({
+            "compound_id": ["L01-1-1", "L02-1-1", "L03-1-1"],
+            "library_id":  ["L01",     "L02",     "L03"],
+            "raw_count":   [1,         2,         3],
+            "corrected_count": [1,     2,         3],
+        })
+        orig = tmp_path / "norm.parquet"
+        df_orig.write_parquet(orig)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1"], "library_id": ["L01"],
+            "raw_count": [1], "corrected_count": [1], "SMILES": ["CCO"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert len(df) == 3
+        null_libs = set(df.filter(pl.col("SMILES").is_null())["library_id"].to_list())
+        assert null_libs == {"L02", "L03"}
+
+    def test_custom_smiles_col_name(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_count": [3, 1], "corrected_count": [3, 1], "smi": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
+                          "--smiles-col", "smi", "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert "smi" in df.columns
+        assert "SMILES" not in df.columns
+        assert df.filter(pl.col("library_id") == "L02")["smi"][0] is None
+
+    def test_missing_required_args_fails(self):
+        with pytest.raises(SystemExit):
+            merge_smiles_cli([])
 
 
 class TestDeduplicate:
