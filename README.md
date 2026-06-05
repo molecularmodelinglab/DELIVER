@@ -226,7 +226,9 @@ DELIVER/
 
 ## Vendor data preparation
 
-Before running the pipeline you need DELi-format library definitions. If your libraries come from **Hitgen**, use the conversion script:
+Before running the pipeline you need DELi-format library definitions. Use the conversion script matching your vendor:
+
+**Hitgen:**
 
 ```bash
 sbatch scripts/convert_hitgen/convert_hitgen.slurm \
@@ -235,7 +237,19 @@ sbatch scripts/convert_hitgen/convert_hitgen.slurm \
   --config     scripts/convert_hitgen/library_config.yml
 ```
 
-This creates `libraries/` and `building_blocks/` inside `--output-dir`, which you then point `deli_data_dir` at in `params.yml`. See [scripts/convert_hitgen/README.md](scripts/convert_hitgen/README.md) for setup and input format details.
+See [scripts/convert_hitgen/README.md](scripts/convert_hitgen/README.md) for setup and input format details.
+
+**SGC-DEL:**
+
+```bash
+sbatch scripts/convert_hitgen_SGC/convert_decoding.slurm \
+  --input-dir  /path/to/sgc/excel_files \
+  --output-dir /path/to/deli_data
+```
+
+For SMILES lookup, also convert the enumerated structures — see [scripts/convert_hitgen_SGC/README.md](scripts/convert_hitgen_SGC/README.md).
+
+Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, which you then point `deli_data_dir` at in `params.yml`.
 
 ## Pipeline stages
 
