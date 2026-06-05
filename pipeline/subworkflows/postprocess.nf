@@ -121,17 +121,17 @@ process DEDUPLICATE {
     """
 }
 
-process ADD_SMILES {
-    publishDir "${params.out_dir}", mode: 'copy'
+process ADD_SMILES_LIB {
+    tag "${lib_id}"
 
     input:
-    path normalized_parquet
+    tuple path(normalized_parquet), val(lib_id), val(smiles_path)
 
     output:
-    path "normalized.parquet"
+    path "${lib_id}_with_smiles.parquet"
 
     script:
-    def smiles_map   = groovy.json.JsonOutput.toJson(params.smiles.files)
+    def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
     """
@@ -141,7 +141,34 @@ process ADD_SMILES {
         --smiles-map   smiles_map.json \
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
-        --output       normalized.parquet
+        --library      ${lib_id} \
+        --output       ${lib_id}_with_smiles.parquet
+    """
+
+    stub:
+    """
+    touch ${lib_id}_with_smiles.parquet
+    """
+}
+
+process MERGE_SMILES {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path normalized_parquet
+    path partials
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    def smiles_col = params.smiles.smiles_col ?: "SMILES"
+    """
+    python ${projectDir}/../src/deliver/postprocess/merge_smiles.py \
+        --input      ${normalized_parquet} \
+        --partials   ${partials} \
+        --smiles-col ${smiles_col} \
+        --output     normalized.parquet
     """
 
     stub:
@@ -207,8 +234,12 @@ workflow POSTPROCESS {
 
     // Step 2: Add SMILES (optional) and Deduplicate
     if (params.smiles) {
-        ADD_SMILES(NORMALIZE.out)
-        DEDUPLICATE(ADD_SMILES.out)
+        def smiles_ch = Channel.from(
+            params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
+        )
+        ADD_SMILES_LIB(NORMALIZE.out.combine(smiles_ch))
+        MERGE_SMILES(NORMALIZE.out, ADD_SMILES_LIB.out.collect())
+        DEDUPLICATE(MERGE_SMILES.out)
     } else {
         DEDUPLICATE(NORMALIZE.out)
     }

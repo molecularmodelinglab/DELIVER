@@ -206,7 +206,7 @@ DELIVER/
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
 │       ├── deli.nf                   # DELi processes + DELI workflow
-│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + DEDUPLICATE + ENRICHMENT
+│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + ENRICHMENT
 ├── src/
 │   └── deliver/
 │       └── postprocess/              # standalone Python CLI scripts called by NF
@@ -215,6 +215,8 @@ DELIVER/
 │           ├── metrics.py            # metrics (binomial z-score, polyO)
 │           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── normalize.py          # normalize DELi counts → common format
+            ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
+            ├── merge_smiles.py       # merge per-library SMILES parquets into one
 │           ├── deduplicate.py        # deduplication + aggregation
 │           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
 │           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
@@ -243,6 +245,7 @@ This creates `libraries/` and `building_blocks/` inside `--output-dir`, which yo
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
 | Build library dictionary (library_dict.json) | implemented |
 | Normalize DELi counts → common format + validation | implemented |
+| SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
 | Deduplication + aggregation | TODO |
 | Per-compound enrichment scores (z_score_lib, z_score_global, polyo) | implemented |
 | Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
@@ -272,6 +275,29 @@ Written into the generated `decode.yaml` and used to name output files.
 | `selection_condition` | Free-text description of selection conditions |
 | `date_ran` | Date the selection was run (`YYYY-MM-DD`) |
 | `libraries` | List of library IDs to decode against (must exist in `deli_data_dir`) |
+
+### SMILES lookup (optional)
+
+Omit the `smiles` block entirely to skip SMILES joining. When present, the pipeline runs one SLURM job per library in parallel to join SMILES, then merges results before deduplication.
+
+```yaml
+smiles:
+  compound_col: compound   # column name for compound ID in the SMILES parquet files
+  smiles_col:   SMILES     # column name for SMILES in the SMILES parquet files
+  files:
+    L01: /path/to/L01_enumerated.parquet
+    L02: /path/to/L02_enumerated.parquet
+    # one entry per library
+```
+
+**SMILES parquet format** — each file must contain exactly two columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `compound` (or value of `compound_col`) | `String` | Compound ID matching the `compound_id` column in `normalized.parquet`, e.g. `L01-1-1-1` |
+| `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
+
+Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
 
 ### Decode settings
 

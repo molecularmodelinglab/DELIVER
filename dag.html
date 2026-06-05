@@ -37,11 +37,12 @@ flowchart TB
     subgraph " "
     v0["Channel.of"]
     v18["deli_args"]
-    v22["deli_args"]
-    v25["deli_args"]
-    v27["deli_args"]
-    v31["deli_args"]
+    v30["deli_args"]
+    v33["deli_args"]
     v35["deli_args"]
+    v39["deli_args"]
+    v43["deli_args"]
+    v48["Channel.from"]
     end
     subgraph "PREPROCESS [PREPROCESS]"
     v1(["CONCAT"])
@@ -52,32 +53,44 @@ flowchart TB
     v5(["GenerateDecodeYaml"])
     v7(["ExtractSequenceFiles"])
     v19(["DecodeChunk"])
-    v23(["CollectDecodeChunks"])
-    v26(["MergeDecodeStatistics"])
-    v28(["WriteDecodeReport"])
-    v32(["CountChunk"])
-    v34(["CollectCountChunks"])
-    v36(["SummarizeDecodeRun"])
+    v21(["MergeDebugLogs"])
+    v24(["MergeDebugDecoded"])
+    v27(["MergeDebugFailed"])
+    v31(["CollectDecodeChunks"])
+    v34(["MergeDecodeStatistics"])
+    v36(["WriteDecodeReport"])
+    v40(["CountChunk"])
+    v42(["CollectCountChunks"])
+    v44(["SummarizeDecodeRun"])
     v6(( ))
     v8(( ))
     v13(( ))
-    v21(( ))
-    v24(( ))
-    v30(( ))
-    v33(( ))
+    v20(( ))
+    v23(( ))
+    v26(( ))
+    v29(( ))
+    v32(( ))
+    v38(( ))
+    v41(( ))
     end
     subgraph " "
-    v20[" "]
-    v29["report"]
-    v37["summary"]
-    v39[" "]
-    v43[" "]
+    v22[" "]
+    v25[" "]
+    v28[" "]
+    v37["report"]
+    v45["summary"]
+    v55["disynthons"]
+    v56["enrichment"]
     end
     subgraph "POSTPROCESS [POSTPROCESS]"
-    v38(["BUILD_LIBRARY_DICT"])
-    v40(["NORMALIZE"])
-    v41(["DEDUPLICATE"])
-    v42(["ENRICHMENT"])
+    v46(["BUILD_LIBRARY_DICT"])
+    v47(["NORMALIZE"])
+    v50(["ADD_SMILES_LIB"])
+    v52(["MERGE_SMILES"])
+    v53(["DEDUPLICATE"])
+    v54(["ENRICHMENT"])
+    v49(( ))
+    v51(( ))
     end
     v4(( ))
     v0 --> v1
@@ -94,37 +107,55 @@ flowchart TB
     v8 --> v19
     v13 --> v19
     v19 --> v20
-    v19 --> v21
-    v19 --> v24
-    v22 --> v23
-    v8 --> v23
-    v21 --> v23
-    v23 --> v30
-    v25 --> v26
-    v6 --> v26
-    v8 --> v26
-    v24 --> v26
-    v26 --> v28
-    v26 --> v36
+    v19 --> v23
+    v19 --> v26
+    v19 --> v29
+    v19 --> v32
+    v8 --> v21
+    v20 --> v21
+    v21 --> v22
+    v8 --> v24
+    v23 --> v24
+    v24 --> v25
+    v8 --> v27
+    v26 --> v27
     v27 --> v28
-    v6 --> v28
-    v8 --> v28
-    v28 --> v29
-    v31 --> v32
-    v8 --> v32
-    v30 --> v32
-    v32 --> v33
-    v8 --> v34
+    v30 --> v31
+    v8 --> v31
+    v29 --> v31
+    v31 --> v38
     v33 --> v34
+    v6 --> v34
+    v8 --> v34
+    v32 --> v34
     v34 --> v36
-    v34 --> v40
+    v34 --> v44
     v35 --> v36
+    v6 --> v36
     v8 --> v36
     v36 --> v37
-    v38 --> v39
+    v39 --> v40
+    v8 --> v40
+    v38 --> v40
     v40 --> v41
+    v8 --> v42
     v41 --> v42
-    v42 --> v43
+    v42 --> v44
+    v42 --> v47
+    v43 --> v44
+    v8 --> v44
+    v44 --> v45
+    v46 --> v54
+    v47 --> v52
+    v47 --> v49
+    v48 --> v49
+    v49 --> v50
+    v50 --> v51
+    v51 --> v52
+    v52 --> v53
+    v53 --> v54
+    v54 --> v56
+    v54 --> v55
 
 </pre>
 <script type="module">

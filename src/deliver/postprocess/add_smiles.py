@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+import duckdb
 import polars as pl
 
 from deliver.postprocess.columns import LIBRARY_ID
@@ -14,13 +15,17 @@ def add_smiles(
     smiles_files: dict[str, str],
     compound_col: str,
     smiles_col: str,
+    library: str | None = None,
 ) -> pl.DataFrame:
-    """Add SMILES column by lazy lookup from per-library sorted parquet files.
+    """Add SMILES column by DuckDB lookup from per-library sorted parquet files.
 
+    If library is given, process only that library (used for parallel execution).
     Raises ValueError if any compound in a covered library has no SMILES match.
-    compound_col - column name for compound ID in the smiles parquet files
-    smiles_col   - column name for SMILES in the smiles parquet files
     """
+    if library is not None:
+        smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
+        df = df.filter(pl.col(LIBRARY_ID) == library)
+
     results = []
     covered_libs = set(smiles_files.keys())
 
@@ -29,18 +34,23 @@ def add_smiles(
         if len(df_lib) == 0:
             continue
         needed = df_lib["compound_id"].to_list()
-        smiles_df = (
-            pl.scan_parquet(file_path)
-            .filter(pl.col(compound_col).is_in(needed))
-            .select([pl.col(compound_col).alias("compound_id"), pl.col(smiles_col)])
-            .collect()
+        needed_str = ", ".join(f"'{c}'" for c in needed)
+        smiles_df = pl.from_arrow(
+            duckdb.execute(f"""
+                SELECT {compound_col} AS compound_id, {smiles_col}
+                FROM read_parquet('{file_path}')
+                WHERE {compound_col} IN ({needed_str})
+            """).arrow()
         )
         joined = df_lib.join(smiles_df, on="compound_id", how="left")
         missing = joined.filter(pl.col(smiles_col).is_null())["compound_id"].to_list()
-        if missing:
+        corrupted = joined.filter(pl.col(smiles_col).str.contains("\x00"))["compound_id"].to_list()
+        bad = missing + corrupted
+        if bad:
             raise ValueError(
-                f"Library {lib_id}: {len(missing)} compound(s) have no SMILES match: "
-                f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+                f"Library {lib_id}: {len(bad)} compound(s) have missing or corrupted SMILES "
+                f"({len(missing)} null, {len(corrupted)} null-byte): "
+                f"{bad[:5]}{'...' if len(bad) > 5 else ''}"
             )
         results.append(joined)
 
@@ -53,18 +63,19 @@ def add_smiles(
 
 def main(args=None):
     parser = argparse.ArgumentParser(description="Add SMILES to normalized compounds.")
-    parser.add_argument("--input",        required=True, help="Input parquet file")
-    parser.add_argument("--smiles-map",   required=True, help='JSON file: {"lib_id": "file_path", ...}')
+    parser.add_argument("--input",        required=True,  help="Input parquet file")
+    parser.add_argument("--smiles-map",   required=True,  help='JSON file: {"lib_id": "file_path", ...}')
     parser.add_argument("--compound-col", default="compound", help="Compound ID column in SMILES files (default: compound)")
     parser.add_argument("--smiles-col",   default="SMILES",   help="SMILES column name (default: SMILES)")
-    parser.add_argument("--output",       required=True, help="Output parquet file")
+    parser.add_argument("--library",      default=None,   help="Process only this library ID (for parallel execution)")
+    parser.add_argument("--output",       required=True,  help="Output parquet file")
     parsed = parser.parse_args(args)
 
     with open(parsed.smiles_map) as f:
         smiles_files = json.load(f)
 
     df = pl.read_parquet(parsed.input)
-    add_smiles(df, smiles_files, parsed.compound_col, parsed.smiles_col).write_parquet(parsed.output)
+    add_smiles(df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library).write_parquet(parsed.output)
 
 
 if __name__ == "__main__":
