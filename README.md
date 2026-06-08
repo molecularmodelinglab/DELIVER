@@ -7,11 +7,13 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 ## Quick start — Longleaf HPC
 
 ```bash
-# One-time setup on login node
+# 1. Set deli_dir in params.yml to your local DELi repo path
+# 2. One-time setup on login node (requires Python 3.12.4 module)
+module load python/3.12.4
 bash setup.sh
 ```
 
-Edit `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
+Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
 
 ```bash
 sbatch submit.slurm \
@@ -221,7 +223,8 @@ DELIVER/
 │           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
 │           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
 └── scripts/
-    └── convert_hitgen/               # Hitgen TSV → DELi format converter
+    ├── convert_hitgen/               # Hitgen TSV → DELi format converter
+    └── convert_hitgen_SGC/           # SGC-DEL Excel → DELi format + SMILES parquet converter
 ```
 
 ## Vendor data preparation

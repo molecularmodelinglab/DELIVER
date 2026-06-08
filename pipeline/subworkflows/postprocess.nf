@@ -37,7 +37,7 @@ process BUILD_LIBRARY_DICT {
 
     script:
     """
-    python ${projectDir}/../src/deliver/postprocess/build_library_dict.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/build_library_dict.py \
         --deli-data-dir '${params.deli_data_dir}' \
         --output library_dict.json
     """
@@ -59,7 +59,7 @@ process NORMALIZE {
 
     script:
     """
-    python ${projectDir}/../src/deliver/postprocess/normalize.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
         --input  ${counts_parquet} \
         --output normalized.parquet
     """
@@ -136,7 +136,7 @@ process ADD_SMILES_LIB {
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
     """
     echo '${smiles_map}' > smiles_map.json
-    python ${projectDir}/../src/deliver/postprocess/add_smiles.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
         --input        ${normalized_parquet} \
         --smiles-map   smiles_map.json \
         --compound-col ${compound_col} \
@@ -164,7 +164,7 @@ process MERGE_SMILES {
     script:
     def smiles_col = params.smiles.smiles_col ?: "SMILES"
     """
-    python ${projectDir}/../src/deliver/postprocess/merge_smiles.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
         --input      ${normalized_parquet} \
         --partials   ${partials} \
         --smiles-col ${smiles_col} \
@@ -191,12 +191,12 @@ process ENRICHMENT {
 
     script:
     """
-    python ${projectDir}/../src/deliver/postprocess/enrichment.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output       enrichment.parquet
 
-    python ${projectDir}/../src/deliver/postprocess/disynthons.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output-dir   .
