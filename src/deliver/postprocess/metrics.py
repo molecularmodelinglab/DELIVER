@@ -32,7 +32,7 @@ def z_score(corrected_count: pl.Series, n_compounds: int) -> pl.Series:
     denom = math.sqrt(n_compounds - 1)
     if denom == 0:
         return pl.Series([float("nan")] * len(corrected_count))
-    return (corrected_count * n_compounds / n_total - 1) / denom
+    return (corrected_count * (n_compounds / n_total) - 1) / denom
 
 
 # -- polyO --------------------------------------------------------------------

@@ -13,10 +13,15 @@ def _bb_position_key(cycle: int) -> str:
 
 
 def _count_real_building_blocks(bb_csv: Path) -> int:
-    """Count building blocks excluding null blocks (id contains 'null', case-insensitive)."""
+    """Count building blocks from a CSV with columns id,tag (multiple rows per id).
+
+    IDs are sequential integers; null blocks have 'null' in the id.
+    Returns the maximum non-null id, which equals the number of real building blocks.
+    """
     with bb_csv.open() as f:
         reader = csv.DictReader(f)
-        return sum(1 for row in reader if "null" not in row["id"].lower())
+        ids = [int(row["id"]) for row in reader if "null" not in row["id"].lower()]
+    return max(ids) if ids else 0
 
 
 def main(args=None):

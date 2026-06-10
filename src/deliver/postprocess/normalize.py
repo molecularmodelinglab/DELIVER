@@ -64,6 +64,10 @@ def main(args=None):
         sys.exit(1)
 
     df = pl.read_parquet(input_path)
+    n_phantom = df.filter(pl.col("bb_ids") == "").height
+    if n_phantom > 0:
+        print(f"Warning: dropping {n_phantom} rows", file=sys.stderr)
+        df = df.filter(pl.col("bb_ids") != "")
     df = normalize(df)
     validate_common_format(df)
     df.write_parquet(parsed.output)

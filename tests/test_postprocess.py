@@ -24,14 +24,15 @@ def deli_data_dir(tmp_path):
     libraries_dir.mkdir()
     bb_dir.mkdir()
 
-    # L01: 3 real + 1 null in BBA, 2 real in BBB
+    # L01: 3 real + 1 null in BBA (each id has multiple tags), 2 real in BBB
     (libraries_dir / "L01.json").write_text(json.dumps({
         "bb_sets": [
             {"cycle": 1, "bb_set_name": "L01_BBA"},
             {"cycle": 2, "bb_set_name": "L01_BBB"},
         ]
     }))
-    (bb_dir / "L01_BBA.csv").write_text("id,tag\n1,AAA\n2,BBB\n3,CCC\nnull_cap,TTT\n")
+    # ids 1,2,3 each appear twice (two tags per building block); null_cap excluded
+    (bb_dir / "L01_BBA.csv").write_text("id,tag\n1,AAA\n1,AAA2\n2,BBB\n2,BBB2\n3,CCC\n3,CCC2\nnull_cap,TTT\n")
     (bb_dir / "L01_BBB.csv").write_text("id,tag\n1,GGG\n2,CCC\n")
 
     # L02: 2 real in BBA only
@@ -206,6 +207,13 @@ class TestBuildLibraryDict:
         build_library_dict(["--deli-data-dir", str(deli_data_dir), "--output", str(out)])
         data = json.loads(out.read_text())
         assert data["L01"]["A"] == 3   # not 4
+
+    def test_duplicate_tags_per_id_counted_once(self, deli_data_dir, tmp_path):
+        # L01_BBA has 2 rows per id (multiple tags); count should be 3, not 6
+        out = tmp_path / "library_dict.json"
+        build_library_dict(["--deli-data-dir", str(deli_data_dir), "--output", str(out)])
+        data = json.loads(out.read_text())
+        assert data["L01"]["A"] == 3   # max(id), not row count
 
     def test_missing_deli_data_dir_fails(self, tmp_path):
         with pytest.raises(SystemExit):
