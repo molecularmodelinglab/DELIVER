@@ -18,9 +18,12 @@ Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml)
 ```bash
 sbatch submit.slurm \
   --work-dir    /path/to/work \
+  --cache-dir   /path/to/cache \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs
 ```
+
+> **Multiple users sharing this repo:** use separate `--work-dir` and `--cache-dir` paths per user (e.g. `/proj/tropshalab/shared/deliver/work/$USER` and `/proj/tropshalab/shared/deliver/cache/$USER`) so runs do not interfere with each other and `--resume` works correctly.
 
 ## Quick start — GCP Cloud Batch
 
@@ -178,6 +181,7 @@ Add `--resume` to resume after failure:
 ```bash
 sbatch submit.slurm \
   --work-dir    /path/to/work \
+  --cache-dir   /path/to/cache \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs \
   --resume
