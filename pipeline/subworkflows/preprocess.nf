@@ -100,7 +100,7 @@ process DECOMPRESS {
 
 
 process FASTP_MERGE {
-    publishDir "${params.out_dir}/qc", mode: 'copy'
+    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq' ? null : fn }
 
     input:
     path r1
