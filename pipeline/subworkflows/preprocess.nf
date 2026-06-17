@@ -212,7 +212,7 @@ workflow PREPROCESS {
 
     } else {
 
-        reads_ch = Channel.of("R1").combine(r1_files)
+        reads_ch = r1_files.map { files -> tuple("R1", files) }
         concat_out = CONCAT(reads_ch)
         fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
 
