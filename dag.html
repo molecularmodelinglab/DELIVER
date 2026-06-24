@@ -35,127 +35,112 @@
 }%%
 flowchart TB
     subgraph " "
-    v0["Channel.of"]
-    v18["deli_args"]
-    v30["deli_args"]
-    v33["deli_args"]
-    v35["deli_args"]
-    v39["deli_args"]
-    v43["deli_args"]
-    v48["Channel.from"]
+    v0["Channel.fromPath"]
+    v2["Channel.fromPath"]
+    v26["deli_args"]
+    v31["deli_args"]
+    v34["deli_args"]
+    v36["deli_args"]
+    v40["deli_args"]
+    v44["deli_args"]
     end
     subgraph "PREPROCESS [PREPROCESS]"
-    v1(["CONCAT"])
-    v3(["DECOMPRESS"])
-    v2(( ))
-    end
-    subgraph "DELI [DELI]"
-    v5(["GenerateDecodeYaml"])
-    v7(["ExtractSequenceFiles"])
-    v19(["DecodeChunk"])
-    v21(["MergeDebugLogs"])
-    v24(["MergeDebugDecoded"])
-    v27(["MergeDebugFailed"])
-    v31(["CollectDecodeChunks"])
-    v34(["MergeDecodeStatistics"])
-    v36(["WriteDecodeReport"])
-    v40(["CountChunk"])
-    v42(["CollectCountChunks"])
-    v44(["SummarizeDecodeRun"])
-    v6(( ))
+    v7(["CONCAT"])
+    v12(["FASTP_MERGE"])
+    v1(( ))
     v8(( ))
-    v13(( ))
-    v20(( ))
-    v23(( ))
-    v26(( ))
-    v29(( ))
-    v32(( ))
-    v38(( ))
-    v41(( ))
+    v10(( ))
     end
     subgraph " "
-    v22[" "]
-    v25[" "]
+    v13[" "]
+    v14[" "]
+    v19[" "]
     v28[" "]
-    v37["report"]
-    v45["summary"]
-    v55["disynthons"]
-    v56["enrichment"]
+    v29[" "]
+    v38["report"]
+    v46["summary"]
+    v51["disynthons"]
+    v52["enrichment"]
+    end
+    subgraph "DELI [DELI]"
+    v16(["GenerateDecodeYaml"])
+    v18(["ExtractSequenceFiles"])
+    v27(["DecodeChunk"])
+    v32(["CollectDecodeChunks"])
+    v35(["MergeDecodeStatistics"])
+    v37(["WriteDecodeReport"])
+    v41(["CountChunk"])
+    v43(["CollectCountChunks"])
+    v45(["SummarizeDecodeRun"])
+    v17(( ))
+    v20(( ))
+    v25(( ))
+    v30(( ))
+    v33(( ))
+    v39(( ))
+    v42(( ))
     end
     subgraph "POSTPROCESS [POSTPROCESS]"
-    v46(["BUILD_LIBRARY_DICT"])
-    v47(["NORMALIZE"])
-    v50(["ADD_SMILES_LIB"])
-    v52(["MERGE_SMILES"])
-    v53(["DEDUPLICATE"])
-    v54(["ENRICHMENT"])
-    v49(( ))
-    v51(( ))
+    v47(["BUILD_LIBRARY_DICT"])
+    v48(["NORMALIZE"])
+    v49(["DEDUPLICATE"])
+    v50(["ENRICHMENT"])
     end
-    v4(( ))
+    v15(( ))
     v0 --> v1
-    v1 --> v2
-    v2 --> v3
-    v3 --> v4
-    v4 --> v5
-    v5 --> v6
-    v6 --> v7
+    v2 --> v1
+    v1 --> v7
     v7 --> v8
-    v7 --> v13
+    v7 --> v10
+    v8 --> v12
+    v10 --> v12
+    v12 --> v14
+    v12 --> v13
+    v12 --> v15
+    v12 --> v25
+    v15 --> v16
+    v16 --> v17
+    v17 --> v18
     v18 --> v19
-    v6 --> v19
-    v8 --> v19
-    v13 --> v19
-    v19 --> v20
-    v19 --> v23
-    v19 --> v26
-    v19 --> v29
-    v19 --> v32
-    v8 --> v21
-    v20 --> v21
-    v21 --> v22
-    v8 --> v24
-    v23 --> v24
-    v24 --> v25
-    v8 --> v27
+    v18 --> v20
     v26 --> v27
+    v17 --> v27
+    v20 --> v27
+    v25 --> v27
+    v27 --> v29
     v27 --> v28
-    v30 --> v31
-    v8 --> v31
-    v29 --> v31
-    v31 --> v38
-    v33 --> v34
-    v6 --> v34
-    v8 --> v34
-    v32 --> v34
-    v34 --> v36
-    v34 --> v44
-    v35 --> v36
-    v6 --> v36
-    v8 --> v36
+    v27 --> v30
+    v27 --> v33
+    v31 --> v32
+    v20 --> v32
+    v30 --> v32
+    v32 --> v39
+    v34 --> v35
+    v17 --> v35
+    v20 --> v35
+    v33 --> v35
+    v35 --> v37
+    v35 --> v45
     v36 --> v37
-    v39 --> v40
-    v8 --> v40
-    v38 --> v40
+    v17 --> v37
+    v20 --> v37
+    v37 --> v38
     v40 --> v41
-    v8 --> v42
+    v20 --> v41
+    v39 --> v41
     v41 --> v42
-    v42 --> v44
-    v42 --> v47
-    v43 --> v44
-    v8 --> v44
+    v20 --> v43
+    v42 --> v43
+    v43 --> v45
+    v43 --> v48
     v44 --> v45
-    v46 --> v54
-    v47 --> v52
-    v47 --> v49
+    v20 --> v45
+    v45 --> v46
+    v47 --> v50
     v48 --> v49
     v49 --> v50
+    v50 --> v52
     v50 --> v51
-    v51 --> v52
-    v52 --> v53
-    v53 --> v54
-    v54 --> v56
-    v54 --> v55
 
 </pre>
 <script type="module">

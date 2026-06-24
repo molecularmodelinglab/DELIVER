@@ -153,6 +153,41 @@ process FASTP_MERGE {
 
 
 // ============================================================================
+// FASTP_QC PROCESS
+// ============================================================================
+// Runs fastp in QC-only mode (no merging, output reads discarded).
+// Used on the single-end path where FASTP_MERGE does not run.
+
+process FASTP_QC {
+    publishDir "${params.out_dir}/qc", mode: 'copy'
+
+    input:
+    path r1
+
+    output:
+    path "fastp_qc.html", emit: html
+    path "fastp_qc.json", emit: json
+
+    script:
+    def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
+    """
+    ln -s ${r1} input_R1.${r1_ext}
+    fastp \
+        --in1 input_R1.${r1_ext} \
+        -o /dev/null \
+        -h fastp_qc.html \
+        -j fastp_qc.json \
+        -w ${params.fastp_threads}
+    """
+
+    stub:
+    """
+    touch fastp_qc.html fastp_qc.json
+    """
+}
+
+
+// ============================================================================
 // PREPROCESS WORKFLOW
 // ============================================================================
 
@@ -214,6 +249,7 @@ workflow PREPROCESS {
 
         reads_ch = r1_files.map { files -> tuple("R1", files) }
         concat_out = CONCAT(reads_ch)
+        FASTP_QC(concat_out.fastq.map { it[1] })
         fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
 
         def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
