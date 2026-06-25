@@ -14,6 +14,7 @@ from deliver.postprocess.deduplicate import main as deduplicate
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.enrichment import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
+from deliver.postprocess.normalize_custom import main as normalize_custom
 
 
 @pytest.fixture
@@ -879,3 +880,239 @@ class TestDisynthonsComprehensive:
         dn = disynthon_tables["denom_norm"]
         z = disynthon_tables["AC"]["z_score_lib"].to_list()
         assert z == pytest.approx([5/dn, 1/dn, -3/dn, -3/dn])
+
+
+# ---------------------------------------------------------------------------
+# NormalizeCustom
+# ---------------------------------------------------------------------------
+
+class TestNormalizeCustom:
+    def _write(self, tmp_path, data: dict) -> str:
+        p = tmp_path / "input.parquet"
+        pl.DataFrame(data).write_parquet(p)
+        return str(p)
+
+    def test_compound_col_mode(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "cpd":   ["L01-1-2-3", "L01-1-2-4"],
+            "count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count"])
+        df = pl.read_parquet(out)
+        assert "compound_id" in df.columns
+        assert "library_id" in df.columns
+        assert "A" in df.columns and "B" in df.columns and "C" in df.columns
+        assert df["compound_id"].to_list() == ["L01-1-2-3", "L01-1-2-4"]
+        assert df["library_id"].to_list() == ["L01", "L01"]
+        assert df["A"].to_list() == ["1", "1"]
+        assert df["corrected_count"].to_list() == [10, 5]
+
+    def test_library_bb_ids_mode(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "lib":    ["L01", "L01"],
+            "bb_ids": ["1,2,3", "1,2,4"],
+            "count":  [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--library-col", "lib", "--bb-ids-col", "bb_ids",
+                          "--corrected-count-col", "count"])
+        df = pl.read_parquet(out)
+        assert df["compound_id"].to_list() == ["L01-1-2-3", "L01-1-2-4"]
+        assert df["library_id"].to_list() == ["L01", "L01"]
+        assert df["B"].to_list() == ["2", "2"]
+        assert "bb_ids" not in df.columns
+
+    def test_library_cycle_cols_mode(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "lib":   ["L01", "L01"],
+            "cycle1": ["1", "1"],
+            "cycle2": ["2", "2"],
+            "cycle3": ["3", "4"],
+            "count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--library-col", "lib", "--cycle-cols", "cycle1", "cycle2", "cycle3",
+                          "--corrected-count-col", "count"])
+        df = pl.read_parquet(out)
+        assert df["compound_id"].to_list() == ["L01-1-2-3", "L01-1-2-4"]
+        assert df["A"].to_list() == ["1", "1"]
+        assert df["C"].to_list() == ["3", "4"]
+
+    def test_raw_count_included_when_provided(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "cpd": ["L01-1-2", "L01-1-3"], "count": [10, 5], "raw": [12, 6],
+        })
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count",
+                          "--raw-count-col", "raw"])
+        df = pl.read_parquet(out)
+        assert "raw_count" in df.columns
+        assert df["raw_count"].to_list() == [12, 6]
+
+    def test_raw_count_absent_when_not_provided(self, tmp_path):
+        inp = self._write(tmp_path, {"cpd": ["L01-1-2"], "count": [10]})
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count"])
+        assert "raw_count" not in pl.read_parquet(out).columns
+
+    def test_z_score_col_renamed(self, tmp_path):
+        inp = self._write(tmp_path, {"cpd": ["L01-1-2"], "count": [10], "zscore": [1.5]})
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count",
+                          "--z-score-col", "zscore"])
+        df = pl.read_parquet(out)
+        assert "z_score" in df.columns
+        assert "zscore" not in df.columns
+        assert df["z_score"][0] == pytest.approx(1.5)
+
+    def test_smiles_col_renamed(self, tmp_path):
+        inp = self._write(tmp_path, {"cpd": ["L01-1-2"], "count": [10], "smi": ["CCO"]})
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count",
+                          "--smiles-col", "smi"])
+        df = pl.read_parquet(out)
+        assert "SMILES" in df.columns
+        assert df["SMILES"][0] == "CCO"
+
+    def test_compound_col_library_name_with_dash(self, tmp_path):
+        """Library names containing '-' must be preserved when splitting compound_id."""
+        inp = self._write(tmp_path, {
+            "cpd":   ["LIB-1-1-2-3", "LIB-1-1-2-4"],
+            "count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        normalize_custom(["--input", inp, "--output", str(out),
+                          "--compound-col", "cpd", "--corrected-count-col", "count",
+                          "--num-cycles", "3"])
+        df = pl.read_parquet(out)
+        assert df["library_id"].to_list() == ["LIB-1", "LIB-1"]
+        assert df["A"].to_list() == ["1", "1"]
+        assert df["B"].to_list() == ["2", "2"]
+        assert df["C"].to_list() == ["3", "4"]
+
+    def test_ambiguous_mode_fails(self, tmp_path):
+        inp = self._write(tmp_path, {"cpd": ["L01-1"], "count": [1]})
+        out = tmp_path / "out.parquet"
+        with pytest.raises(SystemExit):
+            normalize_custom(["--input", inp, "--output", str(out),
+                              "--compound-col", "cpd",
+                              "--library-col", "lib", "--bb-ids-col", "bb_ids",
+                              "--corrected-count-col", "count"])
+
+    def test_no_mode_fails(self, tmp_path):
+        inp = self._write(tmp_path, {"cpd": ["L01-1"], "count": [1]})
+        out = tmp_path / "out.parquet"
+        with pytest.raises(SystemExit):
+            normalize_custom(["--input", inp, "--output", str(out),
+                              "--corrected-count-col", "count"])
+
+    def test_missing_input_fails(self, tmp_path):
+        with pytest.raises(SystemExit):
+            normalize_custom(["--input", str(tmp_path / "nope.parquet"),
+                              "--output", str(tmp_path / "out.parquet"),
+                              "--compound-col", "cpd", "--corrected-count-col", "count"])
+
+
+# ---------------------------------------------------------------------------
+# Enrichment — optional raw_count / pre-supplied z_score
+# ---------------------------------------------------------------------------
+
+class TestEnrichmentOptionalRaw:
+    def _lib_dict(self, tmp_path) -> str:
+        p = tmp_path / "lib.json"
+        p.write_text(json.dumps({"LIB": {"A": 2}}))
+        return str(p)
+
+    def test_no_raw_count_skips_polyo(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["LIB-1", "LIB-2"],
+            "library_id":      ["LIB", "LIB"],
+            "corrected_count": [10, 2],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
+        result = pl.read_parquet(out)
+        assert "polyo" not in result.columns
+        assert "z_score_lib" in result.columns
+        assert "z_score_global" in result.columns
+
+    def test_presupplied_z_score_carried_through(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["LIB-1", "LIB-2"],
+            "library_id":      ["LIB", "LIB"],
+            "corrected_count": [10, 2],
+            "raw_count":       [10, 2],
+            "z_score":         [1.5, -0.5],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
+        result = pl.read_parquet(out)
+        assert "z_score" in result.columns
+        assert "z_score_lib" not in result.columns
+        assert "z_score_global" not in result.columns
+        assert result["z_score"].to_list() == pytest.approx([1.5, -0.5])
+
+    def test_presupplied_z_score_still_calculates_polyo(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id":     ["LIB-1", "LIB-2"],
+            "library_id":      ["LIB", "LIB"],
+            "corrected_count": [10, 2],
+            "raw_count":       [10, 2],
+            "z_score":         [1.5, -0.5],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        out = tmp_path / "enrich.parquet"
+        enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
+        result = pl.read_parquet(out)
+        assert "polyo" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# Disynthons — optional raw_count
+# ---------------------------------------------------------------------------
+
+class TestDisynthonsOptionalRaw:
+    def _write_input(self, tmp_path, include_raw: bool) -> tuple:
+        data = {
+            "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-2-1-1", "L01-2-1-2"],
+            "library_id":      ["L01"] * 4,
+            "A":               ["1", "1", "2", "2"],
+            "B":               ["1", "1", "1", "1"],
+            "C":               ["1", "2", "1", "2"],
+            "corrected_count": [4, 2, 1, 1],
+        }
+        if include_raw:
+            data["raw_count"] = [4, 2, 1, 1]
+        inp = tmp_path / "norm.parquet"
+        pl.DataFrame(data).write_parquet(inp)
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps({"L01": {"A": 2, "B": 1, "C": 2}}))
+        return inp, lib
+
+    def test_no_raw_count_skips_polyo(self, tmp_path):
+        inp, lib = self._write_input(tmp_path, include_raw=False)
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        df = pl.read_parquet(out / "disynthons_AB.parquet")
+        assert "polyo" not in df.columns
+        assert "z_score_lib" in df.columns
+
+    def test_with_raw_count_includes_polyo(self, tmp_path):
+        inp, lib = self._write_input(tmp_path, include_raw=True)
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        df = pl.read_parquet(out / "disynthons_AB.parquet")
+        assert "polyo" in df.columns

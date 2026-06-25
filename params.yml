@@ -3,7 +3,7 @@
 #
 # The pipeline detects the run mode automatically:
 #   read_1 set → FASTQ input (preprocess → DELi → postprocessing)
-#   counts_file set   → counts.parquet input (postprocessing only)
+#   counts set → counts.parquet input (postprocessing only)
 #
 # Usage:
 #   sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR
@@ -15,7 +15,7 @@
 
 # read_1: sequencing file(s) for read 1 (one or more lanes, .fastq or .fastq.gz)
 # read_2: sequencing file(s) for read 2 — paired-end only; omit or set null for single-end
-#         Set read_1/read_2 OR counts_file, not both.
+#         Set read_1/read_2 OR counts, not both.
 read_1:
   - "/path/to/sample_L001_R1.fastq.gz"
   - "/path/to/sample_L002_R1.fastq.gz"
@@ -26,9 +26,37 @@ read_2:
 # out_dir: directory where all results will be written
 out_dir: "/path/to/results"
 
-# counts_file: path to a pre-computed counts.parquet — skips decoding entirely,
-#              runs postprocessing only. Set instead of read_1/read_2.
-counts_file: null
+# counts: pre-computed counts parquet — skips decoding entirely, runs postprocessing only.
+#         Set instead of read_1/read_2.
+#
+# Required fields:
+#   file:   path to the parquet file
+#   format: "deli"     — raw DELi output (library_id, bb_ids, count, raw_count columns)
+#           "external" — your own file; specify column names below
+#
+# Additional fields for format: "external"
+# Compound identity — specify exactly ONE of:
+#   (a) compound_col: column already in "library-bb1-bb2-bb3" format
+#   (b) library_col + bb_ids_col: library ID column + comma-separated bb IDs column
+#   (c) library_col + cycle_cols: library ID column + individual bb ID columns (in cycle order)
+#
+# counts:
+#   file:   "/path/to/counts.parquet"
+#   format: "deli"
+#
+# counts:
+#   file:                "/path/to/counts.parquet"
+#   format:              "external"
+#   compound_col:        null   # (a) e.g. "compound_id"
+  num_cycles:          null   # (a) number of BB cycles; default 3. Set if your library name contains '-'
+#   library_col:         null   # (b/c) e.g. "library_id"
+#   bb_ids_col:          null   # (b) e.g. "bb_ids"
+#   cycle_cols:          null   # (c) e.g. [A, B, C]
+#   corrected_count_col: null   # required: UMI-corrected count column
+#   raw_count_col:       null   # optional: raw read count (required for PolyO scores)
+#   z_score_col:         null   # optional: pre-calculated z-score (carried through, not recalculated)
+#   smiles_col:          null   # optional: SMILES column
+counts: null
 
 # deli_data_dir: path to the DELi data directory containing library definitions,
 #                building block tables, etc. (see DELi docs for structure)
@@ -89,9 +117,6 @@ wiggle: "YES"
 # -----------------------------------------------------------------------
 # DELi SETUP — set once after cloning, do not change between runs
 # -----------------------------------------------------------------------
-
-# deli_dir: path to the DELi repository — used by setup.sh to install DELi into .venv
-deli_dir: "/path/to/DELi"
 
 # chunk_size: number of reads per FASTQ chunk sent to each decode job
 chunk_size: 1000000

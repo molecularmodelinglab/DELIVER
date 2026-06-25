@@ -172,7 +172,7 @@ The pipeline detects the mode automatically from `params.yml`:
 | `params.yml` | What runs |
 |--------------|-----------|
 | `read_1` set | FASTQ → preprocess → DELi → postprocessing |
-| `counts_file` set | counts.parquet → postprocessing only |
+| `counts` set | counts.parquet → postprocessing only |
 | both set | error |
 | neither set | error |
 
@@ -281,9 +281,44 @@ The only file you need to edit. All parameters are documented inline in `params.
 |-----------|-------------|
 | `read_1` | Read 1 sequencing file(s) — one or more lanes, `.fastq` or `.fastq.gz` |
 | `read_2` | Read 2 sequencing file(s) — paired-end only; omit for single-end |
-| `counts_file` | Pre-computed `counts.parquet` — set instead of `read_1` to skip decoding |
+| `counts` | Pre-computed counts parquet — set instead of `read_1` to skip decoding (see below) |
 | `out_dir` | Directory where all results will be written |
 | `deli_data_dir` | Path to DELi data directory (library definitions, building blocks) |
+
+### counts (optional)
+
+Set `counts` instead of `read_1` to skip decoding and run postprocessing only. `counts.format` is always required.
+
+**DELi output format** — use when the file came from a previous DELIVER or DELi run:
+
+```yaml
+counts:
+  file:   "/path/to/prefix_counts.parquet"
+  format: "deli"
+```
+
+**External format** — use for files from other sources (Hitgen, SGC, your own processing). Specify how to find the compound identity and counts:
+
+```yaml
+counts:
+  file:   "/path/to/counts.parquet"
+  format: "external"
+  corrected_count_col: "UMI_count"   # required: UMI-corrected count column
+
+  # Compound identity — specify exactly ONE of:
+  compound_col: "compound_id"        # (a) already in "library-bb1-bb2-bb3" format
+  # OR
+  library_col:  "library_id"         # (b) library ID column
+  bb_ids_col:   "bb_ids"             #     + comma-separated bb IDs column
+  # OR
+  library_col:  "library_id"         # (c) library ID column
+  cycle_cols:   [A, B, C]            #     + individual bb ID columns in cycle order
+
+  # Optional:
+  raw_count_col: "raw_count"         # raw read count — required for PolyO scores; omit to skip PolyO
+  z_score_col:   "z_score"           # pre-calculated z-score — carried through, not recalculated
+  smiles_col:    "SMILES"            # SMILES column — carried through to output
+```
 
 ### Selection metadata
 
