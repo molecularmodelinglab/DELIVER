@@ -11,7 +11,7 @@
  *
  * Input modes:
  * 1. FASTQ files (read_1, read_2) → preprocess → deli → postprocess
- * 2. Pre-counted parquet (counts_file) → postprocess only
+ * 2. Pre-counted parquet (counts.file) → postprocess only
  *
  * GCS Notes:
  * - Input paths from GCS: gs://bucket/path/file.fastq.gz
@@ -32,12 +32,12 @@ include { POSTPROCESS } from './subworkflows/postprocess.nf'
 workflow {
     // Input validation
     has_fastq  = params.read_1 as boolean
-    has_counts = params.counts_file as boolean
+    has_counts = params.counts as boolean
 
     if (has_fastq && has_counts) {
-        error("Provide either read_1 or counts_file, not both")
+        error("Provide either read_1 or counts, not both")
     } else if (!has_fastq && !has_counts) {
-        error("Provide either read_1 (FASTQ input) or counts_file (counts.parquet input)")
+        error("Provide either read_1 (FASTQ input) or counts (counts parquet input)")
     }
 
     if (has_fastq) {
@@ -49,17 +49,31 @@ workflow {
             PREPROCESS.out.fastq,  // path - for splitFastq
             fastq_uri              // val  - for YAML
         )
-        
+
         POSTPROCESS(DELI.out.counts)
 
     } else if (has_counts) {
         // ====================================================================
         // Path 2: Pre-counted parquet → Postprocess only
         // ====================================================================
-        
-        // Load pre-existing counts parquet from GCS or local
-        counts_ch = Channel.fromPath(params.counts_file)
-        
+        if (!params.counts.format) {
+            error("counts.format is required: set to \"deli\" or \"external\"")
+        }
+        if (params.counts.format == "external") {
+            def c = params.counts
+            // Exactly one compound identity mode
+            def compound_modes = [c.compound_col, c.bb_ids_col, c.cycle_cols].count { it }
+            if (compound_modes == 0) {
+                error("counts (external format): specify compound identity via compound_col, library_col + bb_ids_col, or library_col + cycle_cols")
+            }
+            if (compound_modes > 1) {
+                error("counts (external format): specify only one compound identity mode (compound_col, bb_ids_col, or cycle_cols)")
+            }
+            if (!c.corrected_count_col) {
+                error("counts (external format): corrected_count_col is required")
+            }
+        }
+        counts_ch = Channel.fromPath(params.counts.file)
         POSTPROCESS(counts_ch)
     }
 }

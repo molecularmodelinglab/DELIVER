@@ -5,6 +5,7 @@ LIBRARY_ID = "library_id"
 RAW_COUNT = "raw_count"
 CORRECTED_COUNT = "corrected_count"
 
+Z_SCORE = "z_score"         # pre-supplied z-score (carried through, not recalculated)
 Z_SCORE_LIB = "z_score_lib"
 Z_SCORE_GLOBAL = "z_score_global"
 

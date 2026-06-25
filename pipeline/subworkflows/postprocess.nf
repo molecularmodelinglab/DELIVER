@@ -70,6 +70,46 @@ process NORMALIZE {
     """
 }
 
+process NORMALIZE_CUSTOM {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path counts_parquet
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    def cols = params.counts
+    def compound_args
+    if (cols.compound_col) {
+        def nc = cols.num_cycles ? "--num-cycles ${cols.num_cycles}" : ""
+        compound_args = "--compound-col '${cols.compound_col}' ${nc}"
+    } else if (cols.bb_ids_col) {
+        compound_args = "--library-col '${cols.library_col}' --bb-ids-col '${cols.bb_ids_col}'"
+    } else {
+        compound_args = "--library-col '${cols.library_col}' --cycle-cols ${cols.cycle_cols.join(' ')}"
+    }
+    def raw_arg    = cols.raw_count_col ? "--raw-count-col '${cols.raw_count_col}'"   : ""
+    def z_arg      = cols.z_score_col   ? "--z-score-col '${cols.z_score_col}'"       : ""
+    def smiles_arg = cols.smiles_col    ? "--smiles-col '${cols.smiles_col}'"         : ""
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
+        --input  ${counts_parquet} \
+        --output normalized.parquet \
+        --corrected-count-col '${cols.corrected_count_col}' \
+        ${compound_args} \
+        ${raw_arg} \
+        ${z_arg} \
+        ${smiles_arg}
+    """
+
+    stub:
+    """
+    touch normalized.parquet
+    """
+}
+
 process DEDUPLICATE {
     tag "deduplicate"
     publishDir "${params.out_dir}", mode: 'copy'
@@ -229,19 +269,28 @@ workflow POSTPROCESS {
     ========================================
     """.stripIndent()
 
-    // Step 1: Normalize
-    NORMALIZE(counts)
+    // Step 1: Normalize (DELi format or external format with column mapping)
+    def normalized_ch
+    if (params.counts?.format == "external") {
+        NORMALIZE_CUSTOM(counts)
+        normalized_ch = NORMALIZE_CUSTOM.out
+    } else {
+        NORMALIZE(counts)
+        normalized_ch = NORMALIZE.out
+    }
 
     // Step 2: Add SMILES (optional) and Deduplicate
-    if (params.smiles) {
+    // Skip SMILES join if SMILES is already in the file (counts.smiles_col)
+    def has_embedded_smiles = params.counts?.format == "external" && params.counts?.smiles_col
+    if (params.smiles && !has_embedded_smiles) {
         def smiles_ch = Channel.from(
             params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
         )
-        ADD_SMILES_LIB(NORMALIZE.out.combine(smiles_ch))
-        MERGE_SMILES(NORMALIZE.out, ADD_SMILES_LIB.out.collect())
+        ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
+        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.collect())
         DEDUPLICATE(MERGE_SMILES.out)
     } else {
-        DEDUPLICATE(NORMALIZE.out)
+        DEDUPLICATE(normalized_ch)
     }
 
     // Step 3: Enrichment analysis
