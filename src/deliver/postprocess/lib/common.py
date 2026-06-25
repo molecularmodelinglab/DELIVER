@@ -6,7 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
+from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
 
 COMMON_FORMAT_COLUMNS = {COMPOUND_ID, LIBRARY_ID, RAW_COUNT, CORRECTED_COUNT}
 

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import (
+from deliver.postprocess.lib.columns import (
     CORRECTED_COUNT, LIBRARY_ID, MEAN_COUNT, POLYO, RAW_COUNT, STD_COUNT, TOT_COMPOUNDS,
     Z_SCORE_GLOBAL, Z_SCORE_LIB,
 )
-from deliver.postprocess.common import load_inputs
-from deliver.postprocess.metrics import PolyO, z_score
+from deliver.postprocess.lib.common import load_inputs
+from deliver.postprocess.lib.metrics import PolyO, z_score
 
 _POLYO_RAW = "_polyo_raw"
 
