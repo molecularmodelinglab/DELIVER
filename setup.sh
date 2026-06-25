@@ -2,18 +2,30 @@
 # Run once on the login node to set up dependencies.
 #
 # Usage:
-#   bash setup.sh
+#   bash setup.sh --deli-dir /path/to/DELi
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PARAMS_FILE="${SCRIPT_DIR}/params.yml"
+DELI_DIR=""
 
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --deli-dir) DELI_DIR="$2"; shift 2 ;;
+        *) echo "Unknown argument: $1"; exit 1 ;;
+    esac
+done
+
+if [ -z "$DELI_DIR" ]; then
+    echo "Usage: bash setup.sh --deli-dir /path/to/DELi"
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # 1. Python environment
 # ---------------------------------------------------------------------------
-# module load python/3.12.4
+module purge
+module load python/3.12.4
 echo "Using Python: $(python3 --version)"
 
 # ---------------------------------------------------------------------------
@@ -29,7 +41,6 @@ echo "uv version: $(uv --version)"
 # ---------------------------------------------------------------------------
 # 3. Install DELi into DELIVER venv
 # ---------------------------------------------------------------------------
-DELI_DIR=$(grep '^deli_dir:' "${PARAMS_FILE}" | awk '{print $2}' | tr -d '"')
 echo "DELi directory: ${DELI_DIR}"
 
 echo "Installing DELi..."
