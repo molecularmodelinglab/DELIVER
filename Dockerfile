@@ -65,13 +65,13 @@ RUN rm -rf /root/.deli && \
     echo "=== /root/.deli ===" && \
     cat /root/.deli
 
-# ── DELIVER postprocess scripts ───────────────────────────────
+# ── DELIVER postprocess package ───────────────────────────────
 ENV DELIVER_SRC_DIR=/opt/deliver/src
-RUN mkdir -p ${DELIVER_SRC_DIR}/deliver/postprocess
 
-COPY src/deliver/__init__.py ${DELIVER_SRC_DIR}/deliver/__init__.py
-COPY src/deliver/postprocess/deduplicate.py ${DELIVER_SRC_DIR}/deliver/postprocess/deduplicate.py
-COPY src/deliver/postprocess/enrichment.py ${DELIVER_SRC_DIR}/deliver/postprocess/enrichment.py
+COPY pyproject.toml /opt/deliver/pyproject.toml
+COPY src/ /opt/deliver/src/
+
+RUN uv pip install --system --no-cache /opt/deliver
 
 # ── Entrypoint ────────────────────────────────────────────────
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

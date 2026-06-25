@@ -26,6 +26,13 @@ __pycache__/
 *.pyc
 *.pyo
 
+deliver.egg-info/
+
 # Generated output
 results/
 data/
+
+# EXAMPLE
+
+EXAMPLE
+example_command.md

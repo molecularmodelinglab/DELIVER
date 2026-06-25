@@ -96,16 +96,18 @@ def validate(library_data: pd.DataFrame) -> tuple[bool, str | None]:
 # Conversion
 # ---------------------------------------------------------------------------
 
-def build_library_json(library_tag: str, lib_name: str, cfg: dict) -> dict:
+def build_library_json(library_tag: str, lib_name: str, cfg: dict, with_overhang: bool = False) -> dict:
     schema = {}
     schema["primer1"] = {"tag": cfg["primer1_tag"], "overhang": cfg["primer1_overhang"]}
 
     for i, overhang in enumerate(cfg["bb_overhangs"]):
-        schema[f"bb{i + 1}"] = {
+        entry = {
             "tag": "N" * cfg["bb_length"],
-            "overhang": overhang,
             "error_correction": cfg["error_correction"],
         }
+        if not with_overhang:
+            entry["overhang"] = overhang
+        schema[f"bb{i + 1}"] = entry
 
     schema["library"] = {"tag": library_tag}
     schema["umi"] = {"tag": "N" * cfg["umi_length"]}
@@ -123,12 +125,20 @@ def build_library_json(library_tag: str, lib_name: str, cfg: dict) -> dict:
     }
 
 
-def build_building_blocks(library_data: pd.DataFrame, library_tag: str, lib_name: str) -> dict[str, pd.DataFrame]:
+def build_building_blocks(
+    library_data: pd.DataFrame,
+    library_tag: str,
+    lib_name: str,
+    overhangs: list[str] | None = None,
+) -> dict[str, pd.DataFrame]:
     result = {}
     for cycle_num, cycle_data in library_data.groupby(CYCLE_COL):
         bb_name = idx_to_bbname(int(cycle_num) - 1, lib_name)
         df = cycle_data[[HITS_INDEX_COL, library_tag]].copy()
         df.columns = ["id", "tag"]
+        if overhangs is not None:
+            overhang = overhangs[int(cycle_num) - 1]
+            df["tag"] = df["tag"] + overhang
         result[bb_name] = df
     return result
 
@@ -139,9 +149,11 @@ def build_building_blocks(library_data: pd.DataFrame, library_tag: str, lib_name
 
 def main():
     parser = argparse.ArgumentParser(description="Convert vendor library TSV files to DELi JSON + CSV format.")
-    parser.add_argument("--input-dir",  required=True, help="Directory containing vendor TSV files.")
-    parser.add_argument("--output-dir", required=True, help="Output directory (libraries/ and building_blocks/ created inside).")
-    parser.add_argument("--config",     required=True, help="Path to library_config.yml.")
+    parser.add_argument("--input-dir",    required=True, help="Directory containing vendor TSV files.")
+    parser.add_argument("--output-dir",   required=True, help="Output directory (libraries/ and building_blocks/ created inside).")
+    parser.add_argument("--config",       required=True, help="Path to library_config.yml.")
+    parser.add_argument("--with-overhang", action="store_true",
+                        help="Append the cycle overhang to each building block tag; omit overhang from the library JSON schema.")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -173,8 +185,9 @@ def main():
                 failed += 1
                 continue
 
-            library_json = build_library_json(library_tag, lib_name, cfg)
-            building_blocks = build_building_blocks(data, library_tag, lib_name)
+            overhangs = cfg["bb_overhangs"] if args.with_overhang else None
+            library_json = build_library_json(library_tag, lib_name, cfg, with_overhang=args.with_overhang)
+            building_blocks = build_building_blocks(data, library_tag, lib_name, overhangs=overhangs)
 
             json_path = os.path.join(lib_out, f"{lib_name}.json")
             with open(json_path, "w") as f:

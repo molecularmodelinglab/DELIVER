@@ -7,18 +7,23 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 ## Quick start — Longleaf HPC
 
 ```bash
-# One-time setup on login node
+# 1. Set deli_dir in params.yml to your local DELi repo path
+# 2. One-time setup on login node (requires Python 3.12.4 module)
+module load python/3.12.4
 bash setup.sh
 ```
 
-Edit `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
+Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
 
 ```bash
 sbatch submit.slurm \
   --work-dir    /path/to/work \
+  --cache-dir   /path/to/cache \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs
 ```
+
+> **Multiple users sharing this repo:** use separate `--work-dir` and `--cache-dir` paths per user (e.g. `/proj/tropshalab/shared/deliver/work/$USER` and `/proj/tropshalab/shared/deliver/cache/$USER`) so runs do not interfere with each other and `--resume` works correctly.
 
 ## Quick start — GCP Cloud Batch
 
@@ -176,6 +181,7 @@ Add `--resume` to resume after failure:
 ```bash
 sbatch submit.slurm \
   --work-dir    /path/to/work \
+  --cache-dir   /path/to/cache \
   --params-file /path/to/DELIVER/params.yml \
   --log-dir     /path/to/logs \
   --resume
@@ -189,7 +195,7 @@ bash test.sh --nf       # Nextflow stub tests only (no DELi or fastp required)
 bash test.sh --py       # Python unit tests only
 ```
 
-Python unit tests for postprocessing scripts are in `tests/`. They will grow as `deduplicate.py` and `enrichment.py` are implemented.
+Python unit tests for postprocessing scripts are in `tests/`.
 
 ## Repository structure
 
@@ -206,19 +212,30 @@ DELIVER/
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
 │       ├── deli.nf                   # DELi processes + DELI workflow
-│       └── postprocess.nf            # DEDUPLICATE + ENRICHMENT workflows
+│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + ENRICHMENT
 ├── src/
 │   └── deliver/
-│       └── postprocess/              # standalone Click CLI scripts called by NF
-│           ├── deduplicate.py        # deduplication + aggregation (TODO)
-│           └── enrichment.py         # enrichment scoring (TODO)
+│       └── postprocess/              # standalone Python CLI scripts called by NF
+│           ├── columns.py            # column name constants
+│           ├── common.py             # shared utilities (validate, load inputs)
+│           ├── metrics.py            # metrics (binomial z-score, polyO)
+│           ├── build_library_dict.py # build library dictionary JSON from DELi data
+│           ├── normalize.py          # normalize DELi counts → common format
+            ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
+            ├── merge_smiles.py       # merge per-library SMILES parquets into one
+│           ├── deduplicate.py        # deduplication + aggregation
+│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
+│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
 └── scripts/
-    └── convert_hitgen/               # Hitgen TSV → DELi format converter
+    ├── convert_hitgen/               # Hitgen TSV → DELi format converter
+    └── convert_hitgen_SGC/           # SGC-DEL Excel → DELi format + SMILES parquet converter
 ```
 
 ## Vendor data preparation
 
-Before running the pipeline you need DELi-format library definitions. If your libraries come from **Hitgen**, use the conversion script:
+Before running the pipeline you need DELi-format library definitions. Use the conversion script matching your vendor:
+
+**Hitgen:**
 
 ```bash
 sbatch scripts/convert_hitgen/convert_hitgen.slurm \
@@ -227,7 +244,19 @@ sbatch scripts/convert_hitgen/convert_hitgen.slurm \
   --config     scripts/convert_hitgen/library_config.yml
 ```
 
-This creates `libraries/` and `building_blocks/` inside `--output-dir`, which you then point `deli_data_dir` at in `params.yml`. See [scripts/convert_hitgen/README.md](scripts/convert_hitgen/README.md) for setup and input format details.
+See [scripts/convert_hitgen/README.md](scripts/convert_hitgen/README.md) for setup and input format details.
+
+**SGC-DEL:**
+
+```bash
+sbatch scripts/convert_hitgen_SGC/convert_decoding.slurm \
+  --input-dir  /path/to/sgc/excel_files \
+  --output-dir /path/to/deli_data
+```
+
+For SMILES lookup, also convert the enumerated structures — see [scripts/convert_hitgen_SGC/README.md](scripts/convert_hitgen_SGC/README.md).
+
+Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, which you then point `deli_data_dir` at in `params.yml`.
 
 ## Pipeline stages
 
@@ -235,8 +264,12 @@ This creates `libraries/` and `building_blocks/` inside `--output-dir`, which yo
 |-------|--------|
 | Preprocessing: concat lanes, merge paired-end reads (fastp) | implemented |
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
-| Deduplication + aggregation | stub (TODO) |
-| Enrichment scoring | stub (TODO) |
+| Build library dictionary (library_dict.json) | implemented |
+| Normalize DELi counts → common format + validation | implemented |
+| SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
+| Deduplication + aggregation | TODO |
+| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) | implemented |
+| Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
 
 ## params.yml
 
@@ -263,6 +296,29 @@ Written into the generated `decode.yaml` and used to name output files.
 | `selection_condition` | Free-text description of selection conditions |
 | `date_ran` | Date the selection was run (`YYYY-MM-DD`) |
 | `libraries` | List of library IDs to decode against (must exist in `deli_data_dir`) |
+
+### SMILES lookup (optional)
+
+Omit the `smiles` block entirely to skip SMILES joining. When present, the pipeline runs one SLURM job per library in parallel to join SMILES, then merges results before deduplication.
+
+```yaml
+smiles:
+  compound_col: compound   # column name for compound ID in the SMILES parquet files
+  smiles_col:   SMILES     # column name for SMILES in the SMILES parquet files
+  files:
+    L01: /path/to/L01_enumerated.parquet
+    L02: /path/to/L02_enumerated.parquet
+    # one entry per library
+```
+
+**SMILES parquet format** — each file must contain exactly two columns:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `compound` (or value of `compound_col`) | `String` | Compound ID matching the `compound_id` column in `normalized.parquet`, e.g. `L01-1-1-1` |
+| `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
+
+Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
 
 ### Decode settings
 

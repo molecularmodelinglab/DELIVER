@@ -29,6 +29,47 @@ nextflow.enable.dsl = 2
 // Removes duplicate compounds from DELi counts
 // Calls Python script: src/deliver/postprocess/deduplicate.py
 
+process BUILD_LIBRARY_DICT {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    output:
+    path "library_dict.json"
+
+    script:
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/build_library_dict.py \
+        --deli-data-dir '${params.deli_data_dir}' \
+        --output library_dict.json
+    """
+
+    stub:
+    """
+    touch library_dict.json
+    """
+}
+
+process NORMALIZE {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path counts_parquet
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
+        --input  ${counts_parquet} \
+        --output normalized.parquet
+    """
+
+    stub:
+    """
+    touch normalized.parquet
+    """
+}
+
 process DEDUPLICATE {
     tag "deduplicate"
     publishDir "${params.out_dir}", mode: 'copy'
@@ -80,11 +121,61 @@ process DEDUPLICATE {
     """
 }
 
-// ============================================================================
-// ENRICHMENT PROCESS
-// ============================================================================
-// Performs enrichment analysis on deduplicated compounds
-// Calls Python script: src/deliver/postprocess/enrichment.py
+process ADD_SMILES_LIB {
+    tag "${lib_id}"
+
+    input:
+    tuple path(normalized_parquet), val(lib_id), val(smiles_path)
+
+    output:
+    path "${lib_id}_with_smiles.parquet"
+
+    script:
+    def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
+    def compound_col = params.smiles.compound_col ?: "compound"
+    def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
+    """
+    echo '${smiles_map}' > smiles_map.json
+    python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
+        --input        ${normalized_parquet} \
+        --smiles-map   smiles_map.json \
+        --compound-col ${compound_col} \
+        --smiles-col   ${smiles_col} \
+        --library      ${lib_id} \
+        --output       ${lib_id}_with_smiles.parquet
+    """
+
+    stub:
+    """
+    touch ${lib_id}_with_smiles.parquet
+    """
+}
+
+process MERGE_SMILES {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path normalized_parquet
+    path partials
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    def smiles_col = params.smiles.smiles_col ?: "SMILES"
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
+        --input      ${normalized_parquet} \
+        --partials   ${partials} \
+        --smiles-col ${smiles_col} \
+        --output     normalized.parquet
+    """
+
+    stub:
+    """
+    cp ${normalized_parquet} normalized.parquet
+    """
+}
 
 process ENRICHMENT {
     tag "enrichment"
@@ -92,48 +183,29 @@ process ENRICHMENT {
 
     input:
     path deduplicated_parquet
-    // Deduplicated parquet file (staged from GCS if needed)
+    path library_dict
 
     output:
-    path "enrichment.parquet", emit: enrichment
+    path "enrichment.parquet"
+    path "disynthons_*.parquet"
 
     script:
-    def deli_data_arg = params.deli_data_dir 
-        ? "--deli-data-dir '${params.deli_data_dir}'" 
-        : ""
-
     """
-    echo "========================================"
-    echo "ENRICHMENT: Performing enrichment analysis"
-    echo "========================================"
-    echo "Input: ${deduplicated_parquet}"
-    
-    # Verify input file exists
-    if [[ ! -f "${deduplicated_parquet}" ]]; then
-        echo "ERROR: Input parquet not found: ${deduplicated_parquet}"
-        ls -lah
-        exit 1
-    fi
-    
-    echo "Input file size: \$(du -h ${deduplicated_parquet} | cut -f1)"
+    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \
+        --input        ${deduplicated_parquet} \
+        --library-dict ${library_dict} \
+        --output       enrichment.parquet
 
-    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \\
-        --input  ${deduplicated_parquet} \\
-        --output enrichment.parquet \\
-        ${deli_data_arg}
-
-    # Verify output
-    if [[ -f enrichment.parquet ]]; then
-        echo "Output file size: \$(du -h enrichment.parquet | cut -f1)"
-    else
-        echo "ERROR: Enrichment analysis failed, output not created"
-        exit 1
-    fi
+    python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
+        --input        ${deduplicated_parquet} \
+        --library-dict ${library_dict} \
+        --output-dir   .
     """
 
     stub:
     """
     touch enrichment.parquet
+    touch disynthons_AB.parquet
     """
 }
 
@@ -147,6 +219,7 @@ workflow POSTPROCESS {
     // Path channel: merged counts parquet from DELI (or pre-existing)
 
     main:
+    BUILD_LIBRARY_DICT()
 
     log.info """
     ========================================
@@ -156,12 +229,26 @@ workflow POSTPROCESS {
     ========================================
     """.stripIndent()
 
-    // Step 1: Deduplicate
-    DEDUPLICATE(counts)
+    // Step 1: Normalize
+    NORMALIZE(counts)
 
-    // Step 2: Enrichment analysis
-    ENRICHMENT(DEDUPLICATE.out.dedup)
+    // Step 2: Add SMILES (optional) and Deduplicate
+    if (params.smiles) {
+        def smiles_ch = Channel.from(
+            params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
+        )
+        ADD_SMILES_LIB(NORMALIZE.out.combine(smiles_ch))
+        MERGE_SMILES(NORMALIZE.out, ADD_SMILES_LIB.out.collect())
+        DEDUPLICATE(MERGE_SMILES.out)
+    } else {
+        DEDUPLICATE(NORMALIZE.out)
+    }
+
+    // Step 3: Enrichment analysis
+    ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
 
     emit:
-    results = ENRICHMENT.out.enrichment
+    enrichment   = ENRICHMENT.out[0]
+    disynthons   = ENRICHMENT.out[1]
+    library_dict = BUILD_LIBRARY_DICT.out
 }

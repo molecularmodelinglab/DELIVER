@@ -102,10 +102,26 @@ prefix: ""
 # debug: enable DELi debug logging
 debug: false
 
+# save_fastq_info: include fastq_file and read_name columns in decoded output (published to out_dir/debug/decoded/)
+save_fastq_info: false
+
+# save_failed: save failed decoding results per chunk to out_dir/debug/failed/
+save_failed: false
+
 # config_file: optional path to a custom DELi config file
 # config_file: null
 
 
-
-
-
+# smiles: optional SMILES lookup configuration.
+# If provided, SMILES are added to each compound after normalization and
+# carried through to enrichment.parquet. Disynthons are not affected.
+# compound_col - column name for compound ID in your SMILES files
+# smiles_col   - column name for SMILES in your SMILES files
+# files        - mapping of library_id to sorted enumerated parquet file
+# smiles:
+#   compound_col: compound
+#   smiles_col: SMILES
+#   files:
+#     L01: /path/to/L01_enumerated.parquet
+#     L04: /path/to/L04_enumerated.parquet
+smiles: null

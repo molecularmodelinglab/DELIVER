@@ -50,7 +50,8 @@ fi
 if [[ "${RUN_PY}" == true ]]; then
     module load python/3.12.4 2>/dev/null || true
     source "${DELIVER_DIR}/.venv/bin/activate"
-    run "Python unit tests" pytest "${DELIVER_DIR}/tests/" -v
+    uv pip install -e "${DELIVER_DIR}" pytest --quiet
+    run "Python unit tests" "${DELIVER_DIR}/.venv/bin/pytest" "${DELIVER_DIR}/tests/" -v
 fi
 
 # ---------------------------------------------------------------------------

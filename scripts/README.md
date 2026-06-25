@@ -9,6 +9,7 @@ These scripts are **not part of the Nextflow pipeline**.
 | Directory | What it does |
 |-----------|--------------|
 | [`convert_hitgen/`](convert_hitgen/README.md) | Convert Hitgen library TSV files to DELi format |
+| [`convert_hitgen_SGC/`](convert_hitgen_SGC/README.md) | Convert SGC library Excel files to DELi format (`convert_decoding`); convert enumerated structures to sorted SMILES parquet (`convert_smiles`) |
 | [`slurm_analysis/`](slurm_analysis/README.md) | Parse Nextflow log and report SLURM job efficiency |
 
 ## Conventions
