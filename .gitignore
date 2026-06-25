@@ -18,7 +18,6 @@ work/
 *.log
 *.out
 
-# Pipeline visualization — kept: dag.html, dag.png
 
 # Python virtual environment and bytecode
 .venv/
