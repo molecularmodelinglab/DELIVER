@@ -9,7 +9,7 @@ import pytest
 from deliver.postprocess.add_smiles import main as add_smiles
 from deliver.postprocess.merge_smiles import main as merge_smiles_cli
 from deliver.postprocess.build_library_dict import main as build_library_dict
-from deliver.postprocess.common import validate_common_format
+from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.enrichment import main as enrichment

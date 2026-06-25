@@ -7,7 +7,7 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
-from deliver.postprocess.columns import LIBRARY_ID
+from deliver.postprocess.lib.columns import LIBRARY_ID
 
 
 def add_smiles(

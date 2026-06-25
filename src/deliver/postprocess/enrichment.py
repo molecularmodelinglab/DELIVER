@@ -6,9 +6,9 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import CORRECTED_COUNT, LIBRARY_ID, POLYO, RAW_COUNT, Z_SCORE_GLOBAL, Z_SCORE_LIB
-from deliver.postprocess.common import load_inputs
-from deliver.postprocess.metrics import PolyO, z_score
+from deliver.postprocess.lib.columns import CORRECTED_COUNT, LIBRARY_ID, POLYO, RAW_COUNT, Z_SCORE_GLOBAL, Z_SCORE_LIB
+from deliver.postprocess.lib.common import load_inputs
+from deliver.postprocess.lib.metrics import PolyO, z_score
 
 
 def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:

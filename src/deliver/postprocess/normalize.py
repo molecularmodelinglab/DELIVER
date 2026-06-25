@@ -6,8 +6,8 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
-from deliver.postprocess.common import validate_common_format
+from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
+from deliver.postprocess.lib.common import validate_common_format
 
 DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}
 
