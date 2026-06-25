@@ -4,6 +4,8 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 
 **We are using the "patch" branch of DELi as of now:** https://github.com/Popov-Lab-UNC/DELi/tree/patch
 
+For a detailed technical walkthrough of every pipeline step, see [docs/details.md](docs/details.md).
+
 ## Quick start — Longleaf HPC
 
 ```bash
@@ -157,13 +159,13 @@ Results go to the `out_dir` set in `params_local.yml`.
 cd /path/to/DELIVER
 module load nextflow
 nextflow run pipeline/main.nf \
-  -with-dag dag.html \
+  -with-dag docs/dag.html \
   -params-file params.yml \
   -profile local \
   -preview
 ```
 
-Opens as `dag.html` in the browser.
+Opens as `docs/dag.html` in the browser. A pre-generated copy is kept at [docs/dag.html](docs/dag.html) and [docs/dag.png](docs/dag.png).
 
 ## Run modes
 
