@@ -9,10 +9,8 @@ For a detailed technical walkthrough of every pipeline step, see [docs/details.m
 ## Quick start — Longleaf HPC
 
 ```bash
-# 1. Set deli_dir in params.yml to your local DELi repo path
-# 2. One-time setup on login node (requires Python 3.12.4 module)
-module load python/3.12.4
-bash setup.sh
+# One-time setup on the login node — loads Python 3.12.4 and creates .venv
+bash setup.sh --deli-dir /path/to/DELi
 ```
 
 Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
@@ -204,7 +202,7 @@ Python unit tests for postprocessing scripts are in `tests/`.
 ```
 DELIVER/
 ├── params.yml                        # template — copy to params_local.yml for local runs
-├── setup.sh                          # one-time setup for Longleaf: creates .venv, installs DELi
+├── setup.sh                          # one-time setup for Longleaf: bash setup.sh --deli-dir /path/to/DELi
 ├── setup_local.sh                    # one-time setup for local Mac (uses uv + Python 3.13)
 ├── submit.slurm                      # SLURM launcher for Longleaf
 ├── run_local.sh                      # run script for local Mac
