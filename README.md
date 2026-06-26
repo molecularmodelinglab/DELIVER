@@ -212,7 +212,7 @@ DELIVER/
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
 │       ├── deli.nf                   # DELi processes + DELI workflow
-│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + ENRICHMENT
+│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + SINGLETON + JOIN + LABEL
 ├── src/
 │   └── deliver/
 │       └── postprocess/              # standalone Python CLI scripts called by NF
@@ -221,11 +221,14 @@ DELIVER/
 │           ├── metrics.py            # metrics (binomial z-score, polyO)
 │           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── normalize.py          # normalize DELi counts → common format
-            ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
-            ├── merge_smiles.py       # merge per-library SMILES parquets into one
+│           ├── normalize_custom.py   # normalize external counts with user-specified column mapping
+│           ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
+│           ├── merge_smiles.py       # merge per-library SMILES parquets into one
 │           ├── deduplicate.py        # deduplication + aggregation
-│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
-│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
+│           ├── singleton.py          # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
+│           ├── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
+│           ├── join.py               # join singletons + disynthons into enriched.parquet (wide table)
+│           └── label.py              # add label_* boolean columns per labeling mode
 └── scripts/
     ├── convert_hitgen/               # Hitgen TSV → DELi format converter
     └── convert_hitgen_SGC/           # SGC-DEL Excel → DELi format + SMILES parquet converter
@@ -266,10 +269,13 @@ Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, w
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
 | Build library dictionary (library_dict.json) | implemented |
 | Normalize DELi counts → common format + validation | implemented |
+| Normalize external counts with user-specified column mapping | implemented |
 | SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
-| Deduplication + aggregation | TODO |
-| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) | implemented |
+| Deduplication + aggregation | implemented |
+| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) — singletons.parquet | implemented |
 | Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
+| Join singletons + disynthons into enriched.parquet (wide table) | implemented |
+| Label compounds with boolean label_* columns (count, z-score, polyo modes) — labeled.parquet | implemented |
 
 ## params.yml
 
@@ -283,7 +289,9 @@ The only file you need to edit. All parameters are documented inline in `params.
 | `read_2` | Read 2 sequencing file(s) — paired-end only; omit for single-end |
 | `counts` | Pre-computed counts parquet — set instead of `read_1` to skip decoding (see below) |
 | `out_dir` | Directory where all results will be written |
-| `deli_data_dir` | Path to DELi data directory (library definitions, building blocks) |
+| `deli_data_dir` | Path to DELi data directory (library definitions, building blocks). Not required when `library_dict` is set. |
+| `library_dict` | Path to a pre-computed `library_dict.json`. When set, `BUILD_LIBRARY_DICT` is skipped and `deli_data_dir` is not needed. Useful in counts mode on a machine without DELi data. |
+| `on_duplicate_compound_id` | What to do when the same `compound_id` appears more than once: `"fail"` (default) — abort with an error; `"sum"` — merge by summing counts. |
 
 ### counts (optional)
 
@@ -354,6 +362,22 @@ smiles:
 | `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
 
 Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
+
+### Labeling (optional)
+
+Adds one `label_<mode>` boolean column per mode to `enriched.parquet` and writes `labeled.parquet`. Omit `labeling` (or set to `null`) to skip.
+
+```yaml
+labeling:
+  - count               # corrected_count > 5
+  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)
+  - count_zscore_global # corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1)
+  - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)
+```
+
+Each mode validates that its required columns are present and fails with a clear error if they are not. `z_score_lib`/`z_score_global` modes require singleton enrichment to have been computed (not applicable if a pre-supplied `z_score` was used without running `singleton.py`).
+
+If a `SMILES` column is present and any SMILES appear more than once, duplicate rows are also written to `labeled_duplicates.parquet` sorted by SMILES.
 
 ### Decode settings
 
