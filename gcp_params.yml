@@ -21,9 +21,9 @@ read_2:
 # out_dir: directory where all results will be written
 out_dir: gs://deliver-process/temp-processed-files-temp
 
-# counts_file: path to a pre-computed counts.parquet — skips decoding entirely,
-#              runs postprocessing only. Set instead of read_1/read_2.
-counts_file: null
+# counts: pre-computed counts parquet — skips decoding entirely, runs postprocessing only.
+#         Set instead of read_1/read_2. See params.yml for full format documentation.
+counts: null
 
 
 deli_data_dir: /opt/deli_data/buildingblocks
@@ -131,9 +131,6 @@ wiggle: "YES"
 # -----------------------------------------------------------------------
 # DELi SETUP — set once after cloning, do not change between runs
 # -----------------------------------------------------------------------
-
-# deli_dir: path to the DELi repository — used by setup.sh to install DELi into .venv
-deli_dir: "deli-chem"
 
 # chunk_size: number of reads per FASTQ chunk sent to each decode job
 chunk_size: 1000000
