@@ -48,7 +48,7 @@ out_dir: "/path/to/results"
 #   file:                "/path/to/counts.parquet"
 #   format:              "external"
 #   compound_col:        null   # (a) e.g. "compound_id"
-  num_cycles:          null   # (a) number of BB cycles; default 3. Set if your library name contains '-'
+#   num_cycles:          null   # (a) number of BB cycles; default 3. Set if your library name contains '-'
 #   library_col:         null   # (b/c) e.g. "library_id"
 #   bb_ids_col:          null   # (b) e.g. "bb_ids"
 #   cycle_cols:          null   # (c) e.g. [A, B, C]
