@@ -150,3 +150,9 @@ save_failed: false
 #     L01: /path/to/L01_enumerated.parquet
 #     L04: /path/to/L04_enumerated.parquet
 smiles: null
+
+# on_duplicate_compound_id: what to do when the same compound_id appears more than once.
+#   "fail" — abort with an error listing the offending IDs (default; alerts you to unexpected duplicates)
+#   "sum"  — merge duplicate rows by summing corrected_count and raw_count
+#            If a SMILES column is present, all duplicate rows must have the same SMILES — fails otherwise.
+on_duplicate_compound_id: "fail"

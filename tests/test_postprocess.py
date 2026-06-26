@@ -10,7 +10,7 @@ from deliver.postprocess.add_smiles import main as add_smiles
 from deliver.postprocess.merge_smiles import main as merge_smiles_cli
 from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.lib.common import validate_common_format
-from deliver.postprocess.deduplicate import main as deduplicate
+from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.enrichment import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
@@ -434,20 +434,87 @@ class TestMergeSmiles:
 
 
 class TestDeduplicate:
-    def test_runs_and_writes_output(self, counts_parquet, tmp_path):
-        out = tmp_path / "dedup.parquet"
-        deduplicate(["--input", str(counts_parquet), "--output", str(out)])
-        assert out.exists()
+    def _write(self, tmp_path, data: dict) -> str:
+        p = tmp_path / "input.parquet"
+        pl.DataFrame(data).write_parquet(p)
+        return str(p)
 
-    def test_output_is_valid_parquet(self, counts_parquet, tmp_path):
-        out = tmp_path / "dedup.parquet"
-        deduplicate(["--input", str(counts_parquet), "--output", str(out)])
+    def test_no_duplicates_passthrough(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "compound_id": ["L01-1-2", "L01-1-3"], "library_id": ["L01", "L01"],
+            "corrected_count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "fail"])
         df = pl.read_parquet(out)
-        assert len(df) > 0
+        assert len(df) == 2
+
+    def test_fail_mode_raises_on_duplicates(self, tmp_path):
+        df = pl.DataFrame({"compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"], "corrected_count": [10, 5]})
+        with pytest.raises(ValueError, match="duplicate compound"):
+            deduplicate_df(df, "fail")
+
+    def test_fail_mode_exits_via_cli(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"],
+            "corrected_count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        with pytest.raises(SystemExit):
+            deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "fail"])
+
+    def test_sum_mode_merges_duplicates(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "compound_id": ["L01-1-2", "L01-1-2", "L01-1-3"],
+            "library_id":  ["L01",     "L01",      "L01"],
+            "corrected_count": [10, 5, 8],
+            "raw_count":       [12, 6, 9],
+        })
+        out = tmp_path / "out.parquet"
+        deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "sum"])
+        df = pl.read_parquet(out).sort("compound_id")
+        assert len(df) == 2
+        assert df.filter(pl.col("compound_id") == "L01-1-2")["corrected_count"][0] == 15
+        assert df.filter(pl.col("compound_id") == "L01-1-2")["raw_count"][0] == 18
+
+    def test_sum_mode_preserves_column_order(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "compound_id": ["L01-1-2", "L01-1-2"],
+            "library_id":  ["L01", "L01"],
+            "corrected_count": [10, 5],
+        })
+        out = tmp_path / "out.parquet"
+        deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "sum"])
+        df = pl.read_parquet(out)
+        assert df.columns == ["compound_id", "library_id", "corrected_count"]
+
+    def test_smiles_conflict_raises_regardless_of_mode(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"],
+            "corrected_count": [10, 5], "SMILES": ["CCO", "CCC"],
+        })
+        with pytest.raises(ValueError, match="conflicting SMILES"):
+            deduplicate_df(df, "sum")
+
+    def test_smiles_consistent_duplicates_sum_ok(self, tmp_path):
+        inp = self._write(tmp_path, {
+            "compound_id": ["L01-1-2", "L01-1-2"],
+            "library_id":  ["L01", "L01"],
+            "corrected_count": [10, 5],
+            "SMILES": ["CCO", "CCO"],  # same SMILES — ok
+        })
+        out = tmp_path / "out.parquet"
+        deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "sum"])
+        df = pl.read_parquet(out)
+        assert len(df) == 1
+        assert df["corrected_count"][0] == 15
+        assert df["SMILES"][0] == "CCO"
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
-            deduplicate(["--input", str(tmp_path / "nonexistent.parquet"), "--output", str(tmp_path / "out.parquet")])
+            deduplicate(["--input", str(tmp_path / "nonexistent.parquet"),
+                         "--output", str(tmp_path / "out.parquet"),
+                         "--on-duplicate-compound-id", "fail"])
 
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):

@@ -122,37 +122,11 @@ process DEDUPLICATE {
     path "deduplicated.parquet", emit: dedup
 
     script:
-    def deli_data_arg = params.deli_data_dir 
-        ? "--deli-data-dir '${params.deli_data_dir}'" 
-        : ""
-
     """
-    echo "========================================"
-    echo "DEDUPLICATE: Removing duplicate compounds"
-    echo "========================================"
-    echo "Input: ${counts_parquet}"
-    
-    # Verify input file exists
-    if [[ ! -f "${counts_parquet}" ]]; then
-        echo "ERROR: Input parquet not found: ${counts_parquet}"
-        ls -lah
-        exit 1
-    fi
-    
-    echo "Input file size: \$(du -h ${counts_parquet} | cut -f1)"
-
-    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \\
-        --input  ${counts_parquet} \\
-        --output deduplicated.parquet \\
-        ${deli_data_arg}
-
-    # Verify output
-    if [[ -f deduplicated.parquet ]]; then
-        echo "Output file size: \$(du -h deduplicated.parquet | cut -f1)"
-    else
-        echo "ERROR: Deduplication failed, output not created"
-        exit 1
-    fi
+    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
+        --input  ${counts_parquet} \
+        --output deduplicated.parquet \
+        --on-duplicate-compound-id '${params.on_duplicate_compound_id}'
     """
 
     stub:
