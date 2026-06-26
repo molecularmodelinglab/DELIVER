@@ -1,8 +1,6 @@
 # DELIVER Pipeline — Detailed Walkthrough
 
-End-to-end analysis of the Nextflow pipeline starting from `pipeline/main.nf`, the
-DELi decoding stage in detail (inputs, outputs and which DELi CLI is called at
-each step), and what the final published artifact is.
+End-to-end description of the Nextflow pipeline starting from `pipeline/main.nf`.
 
 The DELi codebase referenced below is the `patch` branch:
 <https://github.com/Popov-Lab-UNC/DELi/tree/patch>.
@@ -13,25 +11,24 @@ The DELi codebase referenced below is the `patch` branch:
 
 `main.nf` decides between two run modes based on `params.yml`:
 
-| Condition                  | Path taken                                         |
-|----------------------------|----------------------------------------------------|
-| `params.read_1` set        | `PREPROCESS → DELI → POSTPROCESS` (full pipeline)  |
-| `params.counts_file` set   | `POSTPROCESS` only (skip decoding)                 |
-| both set / neither set     | hard error                                         |
+| Condition                  | Path taken                                        |
+|----------------------------|---------------------------------------------------|
+| `params.read_1` set        | `PREPROCESS → DELI → POSTPROCESS` (full pipeline) |
+| `params.counts` set        | `POSTPROCESS` only (skip decoding)                |
+| both set / neither set     | hard error                                        |
+
+When `params.counts` is set, `main.nf` also validates the format block:
+- `counts.format` must be `"deli"` or `"external"` — error otherwise.
+- For `"external"`: exactly one compound identity mode must be specified
+  (`compound_col`, `bb_ids_col`, or `cycle_cols`), and `corrected_count_col` is required.
 
 The full path wires the subworkflows together:
 
 ```
 PREPROCESS()  →  fastq channel
-DELI(fastq, fastq_uri)  →  counts (parquet), summary (json), report (html)
-POSTPROCESS(DELI.out.counts)  →  enrichment.parquet
+DELI(fastq, fastq_uri)  →  counts.parquet, decode_summary.json, decode_report.html
+POSTPROCESS(counts.parquet)  →  enriched.parquet  [+ labeled.parquet]
 ```
-
-So the final published artifact is **`enrichment.parquet`** (see §5), produced by
-`POSTPROCESS.ENRICHMENT` and copied to `${params.out_dir}`. Several intermediate
-artifacts are also published along the way (`merged.fastq` + fastp QC, the
-generated `*.yaml`, `*_decode_stats.json`, `*_counts.parquet`,
-`*_decode_summary.json`, `*_decode_report.html`, `deduplicated.parquet`).
 
 ---
 
@@ -40,305 +37,314 @@ generated `*.yaml`, `*_decode_stats.json`, `*_counts.parquet`,
 **Goal:** turn one or more raw FASTQ files (local or `gs://`) into a single
 uncompressed `merged.fastq` ready for DELi.
 
-Processes:
+| Process       | Input                                    | Output                                          | Tool     |
+|---------------|------------------------------------------|-------------------------------------------------|----------|
+| `CONCAT`      | list of fastq[.gz] per read type         | `R1.fastq[.gz]` / `R2.fastq[.gz]`              | `cat`    |
+| `FASTP_MERGE` | concatenated R1 + R2                     | `merged.fastq`, `fastp.html`, `fastp.json`      | `fastp`  |
+| `DECOMPRESS`  | concatenated single-end R1               | `merged.fastq`                                  | `gunzip` |
 
-| Process       | Input                                | Output                        | Tool        |
-|---------------|--------------------------------------|-------------------------------|-------------|
-| `CONCAT`      | tuple(read_type, list of fastq[.gz]) | `R1.fastq[.gz]`/`R2.fastq[.gz]` | `cat`       |
-| `FASTP_MERGE` | concatenated R1 + R2                 | `merged.fastq`, `fastp.html`, `fastp.json` | `fastp -m --correction` |
-| `DECOMPRESS`  | concatenated single-end R1            | `merged.fastq`                | `gunzip`    |
+Logic:
+- **Paired-end** (`read_2` set): `CONCAT` runs twice (R1, R2) → `FASTP_MERGE` merges with overlap correction.
+- **Single-end**: `CONCAT` once on R1 → `DECOMPRESS` produces `merged.fastq`.
+- Only `FASTP_MERGE` publishes (`${out_dir}/qc/fastp.html` + `fastp.json`).
 
-Logic in `workflow PREPROCESS`:
-
-- Reads `params.read_1` (and optional `params.read_2`) — list or comma-separated
-  string of paths. `Channel.fromPath` preserves `gs://` URIs so Nextflow will
-  stage them automatically.
-- **Paired-end** (`read_2` set): `CONCAT` runs twice (R1, R2) → `FASTP_MERGE`
-  merges paired reads into a single read with overlap correction.
-- **Single-end**: `CONCAT` runs once on R1 → `DECOMPRESS` produces `merged.fastq`.
-- Only `FASTP_MERGE` publishes (`${out_dir}/qc/fastp.html` + `fastp.json`); the
-  fastq itself stays in the work dir and flows on to DELI.
-
-**Emits:** `fastq` — a path channel pointing at `merged.fastq`.
+**Emits:** `fastq` — path to `merged.fastq`.
 
 ---
 
 ## 3. DELI subworkflow — `pipeline/subworkflows/deli.nf`
 
-This is the heart of the pipeline. It takes the merged FASTQ and turns it into a
-table of compound counts plus run statistics and an HTML report. It does so by
-chunking the FASTQ, fanning out to many parallel `deli decode run` jobs,
-aggregating, then chunking again to count compounds in parallel.
+Takes the merged FASTQ and produces a compound counts table plus run statistics
+and an HTML report. The FASTQ is chunked, fanned out to many parallel decode jobs,
+aggregated, then chunked again for parallel counting.
 
-`workflow DELI` takes two inputs:
+### 3.1 `GenerateDecodeYaml`
 
-- `fastq_files` — `Path` channel for the merged FASTQ (used by `splitFastq`).
-- `fastq_uri` — the same path as a URI string (used to embed the path into the
-  generated decode YAML).
-
-### 3.1 Generated YAML — `GenerateDecodeYaml`
-
-- **In:** the merged FASTQ path (only used so the YAML records the actual
-  staged path).
-- **Out (published to `out_dir`):**
-  `${selection_id}_${target_id}_${date_ran}.yaml`
-- **What it is:** the DELi "selection file". Contains selection metadata
-  (`selection_id`, `target_id`, `selection_condition`, `date_ran`,
-  `additional_info`), the list of `sequence_files`, the list of `libraries`
-  to decode against, and the `decode_settings`
-  (`library_error_tolerance`, `min_library_overlap`, `revcomp`,
-  `demultiplexer_algorithm`, `demultiplexer_mode`, `realign`, `wiggle`).
-
-This YAML is the canonical configuration consumed by every DELi step below —
-it tells DELi which libraries to look up in `deli_data_dir` and which parsing
-options to use.
+Writes the DELi "selection file" (`${selection_id}_${target_id}_${date_ran}.yaml`)
+containing selection metadata, sequence file paths, library list, and decode settings.
+Published to `out_dir`.
 
 ### 3.2 `ExtractSequenceFiles`
 
-Small Python helper that reads the generated YAML and writes:
-
-- `selection_id.txt` — used to derive the prefix for output filenames
-  (overridden by `params.prefix` if set).
-- `files.txt` — list of sequence files declared in the YAML (informational; the
-  actual FASTQ Path comes from the channel, not this file — see the inline
-  comment in `deli.nf`).
+Reads the YAML and writes `selection_id.txt` (used for output file prefixes)
+and `files.txt` (informational sequence file list).
 
 ### 3.3 `splitFastq` → `DecodeChunk` (parallel)
 
-```
-fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true)
-```
-
-Every `chunk_size` reads (default 1,000,000) become one chunk, each fed into a
-parallel `DecodeChunk` job.
-
-`DecodeChunk` runs:
+The merged FASTQ is split into chunks of `params.chunk_size` reads (default 1,000,000).
+Each chunk runs:
 
 ```
-deli ${deli_args} decode run \
-    "${selection_file}" \
-    "${fastq_chunk}" \
-    --out-dir ./ \
-    --prefix "${prefix}_${fastq_chunk.baseName}" \
-    --skip-report
+deli decode run <selection.yaml> <chunk.fastq> --out-dir ./ --prefix ... --skip-report
 ```
 
-DELi CLI mapping (`src/deli/cli.py decode run`): converts DNA reads into DEL
-compound identities by looking up library/building-block tags in
-`deli_data_dir`.
+Outputs per chunk: `*_decoded.tsv` (per-read decode results) + `*_decode_statistics.json`.
 
-- **In per chunk:** the chunk FASTQ + the selection YAML.
-- **Out per chunk:**
-  - `${prefix}_<chunk>_decoded.tsv` — per-read decode results (library id,
-    building-block ids, UMI, score, etc.).
-  - `${prefix}_<chunk>_decode_statistics.json` — per-chunk decode stats
-    (counts of pass/fail, error breakdown, etc.).
-  - `deli.log` — per-chunk DELi log.
-
-`deli_args` is assembled in the workflow and may include `--debug`,
-`--deli-data-dir`, and `--config-file` (validated against a safe-path regex
-before being injected).
-
-### 3.4 `CollectDecodeChunks` (gather)
+### 3.4 `CollectDecodeChunks`
 
 ```
-deli ${deli_args} decode collect \
-    *_decoded.tsv \
-    --out-loc "${prefix}_collected.ndjson"
+deli decode collect *_decoded.tsv --out-loc ${prefix}_collected.ndjson
 ```
 
-CLI mapping: `decode collect` — folds all per-read TSVs into NDJSON records,
-one per `(library_id, bb_ids)` combination, with a list of UMI counts. This
-representation is what enables the next chunked count step.
-
-- **In:** all `*_decoded.tsv` from `DecodeChunk` (collected).
-- **Out:** `${prefix}_collected.ndjson` (NOT published — internal).
+Folds all per-read TSVs into NDJSON records grouped by `(library_id, bb_ids)`.
 
 ### 3.5 `MergeDecodeStatistics`
 
 ```
-deli ${deli_args} decode merge-stats \
-    *_decode_statistics.json \
-    --selection-file "${selection_file}" \
-    --out-loc "${prefix}_decode_stats.json"
+deli decode merge-stats *_decode_statistics.json --out-loc ${prefix}_decode_stats.json
 ```
 
-CLI mapping: `decode merge-stats` — consolidates all per-chunk stats JSONs into
-one.
-
-- **In:** every `*_decode_statistics.json` + the selection YAML.
-- **Out (published):** `${prefix}_decode_stats.json`.
+Published to `out_dir`.
 
 ### 3.6 `WriteDecodeReport`
 
 ```
-deli ${deli_args} decode report \
-    "${final_stats}" \
-    --selection-file "${selection_file}" \
-    --out-loc "${prefix}_decode_report.html"
+deli decode report ${prefix}_decode_stats.json --out-loc ${prefix}_decode_report.html
 ```
 
-CLI mapping: `decode report` — renders the merged stats into an HTML report.
-
-- **In:** `${prefix}_decode_stats.json` + selection YAML.
-- **Out (published):** `${prefix}_decode_report.html`.
+Published to `out_dir`.
 
 ### 3.7 `splitText` → `CountChunk` (parallel)
 
-```
-count_chunks = collected_decodes.ndjson.splitText(by: 500_000, file: true)
-```
-
-Each chunk = 500,000 NDJSON lines. Parallel `CountChunk` runs:
+The collected NDJSON is split into chunks of 500,000 lines. Each chunk runs:
 
 ```
-deli ${deli_args} decode count \
-    "${ndjson_chunk}" \
-    --out-loc "${chunk}_counted.parquet" \
-    --output-format parquet \
-    --cluster-umis \
-    --keep-raw-count \
-    --keep-dedup-count
+deli decode count <chunk.ndjson> --output-format parquet --cluster-umis \
+    --keep-raw-count --keep-dedup-count
 ```
 
-CLI mapping: `decode count` — turns NDJSON of decoded reads into a counts
-table. With `--cluster-umis` it deduplicates UMIs to estimate molecule counts;
-`--keep-raw-count`/`--keep-dedup-count` keep the intermediate raw and
-deduplicated counts as additional columns alongside the clustered count.
+`--cluster-umis` deduplicates UMIs to estimate molecule counts.
+`--keep-raw-count` / `--keep-dedup-count` retain intermediate count columns.
 
-- **In:** one NDJSON chunk.
-- **Out:** `<chunk>_counted.parquet`.
+### 3.8 `CollectCountChunks`
 
-### 3.8 `CollectCountChunks` (gather)
+A Polars script (not DELi) that concatenates all counted parquets:
 
-A small Polars script — not a DELi CLI — that lazily reads every chunk parquet
-and sinks them into one parquet:
-
-```
+```python
 pl.scan_parquet(files).sink_parquet("${prefix}_counts.parquet")
 ```
 
-- **In:** every `*_counted.parquet` from `CountChunk`.
-- **Out (published):** `${prefix}_counts.parquet` — **the counts table that
-  feeds POSTPROCESS** and is the typical input when re-running with
-  `counts_file` set.
+Published to `out_dir`. **This is the counts table fed to POSTPROCESS.**
 
 ### 3.9 `SummarizeDecodeRun`
 
 ```
-deli ${deli_args} decode summarize \
-    "${merged_counts}" \
-    "${decode_stats}" \
-    --out-loc "${prefix}_decode_summary.json"
+deli decode summarize ${prefix}_counts.parquet ${prefix}_decode_stats.json \
+    --out-loc ${prefix}_decode_summary.json
 ```
 
-CLI mapping: `decode summarize` — combines the merged counts parquet with the
-merged decode-stats JSON to produce a per-library summary
-(total sequences, compounds, unique molecules).
+Published to `out_dir`.
 
-- **In:** `${prefix}_counts.parquet` + `${prefix}_decode_stats.json`.
-- **Out (published, mode `move`):** `${prefix}_decode_summary.json`.
+### DELI input/output summary
 
-### 3.10 DELI emits
+| Input                                               | Source                              |
+|-----------------------------------------------------|-------------------------------------|
+| Merged FASTQ                                        | `PREPROCESS.out.fastq`              |
+| Selection metadata                                  | `params.yml`                        |
+| Library list                                        | `params.libraries`                  |
+| Decode settings                                     | `params.yml` decode-settings block  |
+| DELi reference data (library JSONs, bb tables)     | `params.deli_data_dir`              |
 
-```
-counts  = ${prefix}_counts.parquet
-summary = ${prefix}_decode_summary.json
-report  = ${prefix}_decode_report.html
-```
-
-Only `counts` is wired into `POSTPROCESS`.
-
-### DELI input/output cheat-sheet
-
-| Input the subworkflow needs                | Comes from                               |
-|--------------------------------------------|------------------------------------------|
-| Merged FASTQ (path + URI)                  | `PREPROCESS.out.fastq` / `.toUriString()` |
-| Selection metadata (selection_id, target_id, date_ran, etc.) | `params.yml`              |
-| Library list                               | `params.libraries`                       |
-| Decode tuning (error tolerance, revcomp…)  | `params.yml` decode-settings block       |
-| DELi reference data (library JSONs, bb tables) | `params.deli_data_dir`               |
-| Optional DELi config                       | `params.config_file`                     |
-
-| Output the subworkflow produces            | Where                                    |
-|--------------------------------------------|------------------------------------------|
-| Generated `*.yaml` (the selection file)    | `${out_dir}/`                            |
-| `${prefix}_decode_stats.json`              | `${out_dir}/`                            |
-| `${prefix}_decode_report.html`             | `${out_dir}/`                            |
-| `${prefix}_counts.parquet`                 | `${out_dir}/` (also fed to POSTPROCESS)  |
-| `${prefix}_decode_summary.json`            | `${out_dir}/`                            |
+| Output (published to `out_dir`)                     |
+|-----------------------------------------------------|
+| `${selection_id}_${target_id}_${date_ran}.yaml`     |
+| `${prefix}_decode_stats.json`                       |
+| `${prefix}_decode_report.html`                      |
+| `${prefix}_counts.parquet`  ← also fed to POSTPROCESS |
+| `${prefix}_decode_summary.json`                     |
 
 ---
 
 ## 4. POSTPROCESS subworkflow — `pipeline/subworkflows/postprocess.nf`
 
-Linear two-step pipeline. Both steps run small Python scripts shipped inside
-this repo (`/opt/deliver/src/deliver/postprocess/...` in the container).
+Runs after DELI (or directly from a pre-existing counts parquet). All steps call
+small Python scripts from `src/deliver/postprocess/`.
 
-| Process       | Command                                                                    | In                       | Out (published)         |
-|---------------|----------------------------------------------------------------------------|--------------------------|-------------------------|
-| `DEDUPLICATE` | `python /opt/deliver/src/deliver/postprocess/deduplicate.py --input … --output deduplicated.parquet` | counts parquet           | `deduplicated.parquet`  |
-| `ENRICHMENT`  | `python /opt/deliver/src/deliver/postprocess/enrichment.py --input … --output enrichment.parquet` | `deduplicated.parquet`   | `enrichment.parquet`    |
+### Step 1 — BUILD_LIBRARY_DICT
 
-> **Note (current state of the repo):** both `deduplicate.py` and
-> `enrichment.py` are scaffolded but logic is `# TODO` — they currently just
-> read the parquet and write it back unchanged. So today the published
-> `enrichment.parquet` is byte-equivalent to the input counts; the subworkflow
-> wiring is in place ahead of the algorithmic work.
+```
+build_library_dict.py --deli-data-dir <deli_data_dir> --output library_dict.json
+```
 
-`POSTPROCESS` emits `results = ENRICHMENT.out.enrichment`.
+Reads DELi library definitions from `deli_data_dir` and writes a JSON mapping each
+library ID to its per-cycle building block counts, e.g.:
+
+```json
+{"L01": {"A": 100, "B": 200, "C": 150}, "L02": {...}}
+```
+
+Used by SINGLETON and DISYNTHONS to compute expected compound space sizes.
+Published to `out_dir`.
+
+### Step 2 — NORMALIZE or NORMALIZE_CUSTOM
+
+Converts the raw counts parquet into a standard internal schema:
+
+| Column          | Description                              |
+|-----------------|------------------------------------------|
+| `compound_id`   | `library_id-bbA-bbB-bbC` string         |
+| `library_id`    | Library identifier                       |
+| `A`, `B`, `C`   | Individual building block IDs per cycle  |
+| `corrected_count` | UMI-corrected count (primary metric)  |
+| `raw_count`     | Raw read count (optional)                |
+| `z_score`       | Pre-supplied z-score (optional, carried through) |
+| `SMILES`        | SMILES string (optional, carried through) |
+
+**`NORMALIZE`** (DELi format, `counts.format: "deli"`): reads `library_id`, `bb_ids`,
+`count` / `raw_count` columns from DELi output and reshapes to standard schema.
+
+**`NORMALIZE_CUSTOM`** (external format, `counts.format: "external"`): maps
+user-specified column names to the standard schema. Compound identity can be
+supplied in three ways (set exactly one in `params.counts`):
+
+| Mode | Params |
+|------|--------|
+| (a) Pre-formatted compound ID | `compound_col` (+ optional `num_cycles` if library name contains `-`) |
+| (b) Library + comma-separated bb IDs | `library_col` + `bb_ids_col` |
+| (c) Library + individual cycle columns | `library_col` + `cycle_cols` |
+
+Published to `out_dir` as `normalized.parquet`.
+
+### Step 2b — ADD_SMILES_LIB + MERGE_SMILES (optional)
+
+Runs only when `params.smiles` is set and SMILES are not already embedded in the
+counts file (`counts.smiles_col` not set).
+
+`ADD_SMILES_LIB` runs in parallel — one job per library in `params.smiles.files`.
+Each job performs a DuckDB predicate-pushdown join against a sorted enumerated
+parquet to look up SMILES by compound ID. Results are merged back into a single
+`normalized.parquet` with a `SMILES` column added.
+
+### Step 3 — DEDUPLICATE
+
+```
+deduplicate.py --input normalized.parquet --output deduplicated.parquet \
+    --on-duplicate-compound-id <fail|sum>
+```
+
+Removes or merges duplicate `compound_id` rows.
+
+| Mode | Behaviour |
+|------|-----------|
+| `fail` (default) | Aborts with an error listing duplicate IDs |
+| `sum` | Merges duplicates by summing `corrected_count` and `raw_count` |
+
+If a `SMILES` column is present, all duplicate rows for the same `compound_id` must
+share the same SMILES — fails loudly otherwise, regardless of mode.
+
+Published to `out_dir` as `deduplicated.parquet`.
+
+### Step 4 — SINGLETON (runs two scripts)
+
+```
+singleton.py   --input deduplicated.parquet --library-dict library_dict.json --output singletons.parquet
+disynthons.py  --input deduplicated.parquet --library-dict library_dict.json --output-dir .
+```
+
+**`singleton.py`** computes per-compound enrichment metrics:
+
+| Output column   | Description |
+|-----------------|-------------|
+| `z_score_lib`   | Binomial z-score relative to library compound space |
+| `z_score_global` | Binomial z-score relative to all libraries combined |
+| `polyo`         | PolyO score — Poisson-based enrichment metric |
+
+**`disynthons.py`** aggregates to disynthon level (all pairs of cycles: AB, BC, AC, …)
+and computes the same three metrics at the disynthon level. One file per cycle pair:
+`disynthon_AB.parquet`, `disynthon_BC.parquet`, `disynthon_AC.parquet`, etc.
+Each row also has `tot_compounds`, `mean_count`, and `std_count` (statistics over the
+third cycle's building blocks within that disynthon).
+
+Both PolyO and z-scores use `corrected_count` (UMI-corrected) throughout.
+If a pre-supplied `z_score` column is present in the input, it is carried through
+and per-compound z-scores are not recalculated.
+
+All files published to `out_dir`.
+
+### Step 5 — JOIN
+
+```
+join.py --input singletons.parquet --disynthons disynthon_*.parquet --output enriched.parquet
+```
+
+Left-joins disynthon metrics onto the singleton table, one set of columns per cycle
+pair. Disynthon columns are prefixed with the pair name in lowercase:
+
+| Singleton columns (unchanged)        | Added disynthon columns (example for AB) |
+|--------------------------------------|------------------------------------------|
+| `compound_id`, `library_id`, `A`, `B`, `C` | `ab_corrected_count`            |
+| `corrected_count`, `raw_count`       | `ab_tot_compounds`, `ab_mean_count`, `ab_std_count` |
+| `z_score_lib`, `z_score_global`      | `ab_z_score_lib`, `ab_z_score_global`   |
+| `polyo`                              | `ab_polyo`                               |
+| `SMILES` (if present)               | _(same for `bc_*`, `ac_*`, …)_           |
+
+If a `SMILES` column is present and any SMILES appear more than once (same structure
+reachable via different building block combinations), the duplicate rows are written
+to `enriched_duplicates.parquet` sorted by SMILES.
+
+Published to `out_dir`:
+- `enriched.parquet` — always
+- `enriched_duplicates.parquet` — only when SMILES duplicates exist
+
+### Step 6 — LABEL (optional)
+
+Runs only when `params.labeling` is set (non-null list of mode names).
+
+```
+label.py --input enriched.parquet --modes <mode1> [mode2 ...] --output labeled.parquet
+```
+
+Adds one `label_<mode>` boolean column per mode. Available modes:
+
+| Mode | Positive criterion |
+|------|--------------------|
+| `count` | `corrected_count > 5` |
+| `count_zscore_lib` | `corrected_count > 5` AND (`z_score_lib > 1` OR any disynthon `z_score_lib > 1`) |
+| `count_zscore_global` | `corrected_count > 5` AND (`z_score_global > 1` OR any disynthon `z_score_global > 1`) |
+| `count_polyo` | `corrected_count > 5` AND (`polyo > 4` OR any disynthon `polyo > 4`) |
+
+Each mode validates that its required columns are present and fails with a clear
+error message if they are not.
+
+Same SMILES-duplicate logic as JOIN: if SMILES duplicates exist in the labeled
+table, `labeled_duplicates.parquet` is written alongside.
+
+Published to `out_dir`:
+- `labeled.parquet` — always (when labeling is enabled)
+- `labeled_duplicates.parquet` — only when SMILES duplicates exist
 
 ---
 
-## 5. The final file
+## 5. Published outputs summary
 
-Across the full path (`PREPROCESS → DELI → POSTPROCESS`):
-
-- **Final file:** `${out_dir}/enrichment.parquet`
-- Produced by: `POSTPROCESS.ENRICHMENT` (`enrichment.py`).
-- Schema (today): same as `${prefix}_counts.parquet` (see §3.7 — at minimum
-  `library_id`, `bb_ids`, clustered count, plus `--keep-raw-count` and
-  `--keep-dedup-count` columns from `deli decode count`). Once the TODOs in
-  the postprocess scripts are filled in, this file will additionally carry
-  per-compound enrichment scores.
-
-In the alternative `counts_file` mode, the input is already a counts parquet, so
-`PREPROCESS` and `DELI` are skipped and `enrichment.parquet` is still the
-final artifact.
-
-Other useful artifacts published to `${out_dir}` along the way:
-
-- `qc/fastp.html`, `qc/fastp.json` — preprocessing QC.
-- `${selection_id}_${target_id}_${date_ran}.yaml` — generated DELi selection
-  file (run reproducibility).
-- `${prefix}_decode_stats.json` — merged decode statistics.
-- `${prefix}_decode_report.html` — human-readable decode report.
-- `${prefix}_counts.parquet` — pre-postprocess counts table.
-- `${prefix}_decode_summary.json` — per-library decode summary.
-- `deduplicated.parquet` — intermediate post-decode artifact.
-- `enrichment.parquet` — **final output**.
+| File | Step | Notes |
+|------|------|-------|
+| `${sel_id}_${target_id}_${date}.yaml` | DELI | Generated DELi selection file |
+| `${prefix}_decode_stats.json` | DELI | Merged per-chunk decode statistics |
+| `${prefix}_decode_report.html` | DELI | Human-readable decode report |
+| `${prefix}_counts.parquet` | DELI | Raw compound counts from DELi |
+| `${prefix}_decode_summary.json` | DELI | Per-library decode summary |
+| `library_dict.json` | POSTPROCESS | Library building block counts |
+| `normalized.parquet` | POSTPROCESS | Counts in standard schema (+ SMILES if joined) |
+| `deduplicated.parquet` | POSTPROCESS | After duplicate compound ID handling |
+| `singletons.parquet` | POSTPROCESS | Compound-level enrichment metrics |
+| `disynthon_AB.parquet`, … | POSTPROCESS | Disynthon-level enrichment metrics, one per cycle pair |
+| `enriched.parquet` | POSTPROCESS | Singletons + disynthon metrics joined (wide table) |
+| `enriched_duplicates.parquet` | POSTPROCESS | Enriched rows with duplicate SMILES, sorted by SMILES (optional) |
+| `labeled.parquet` | POSTPROCESS | Enriched + `label_*` boolean columns (optional) |
+| `labeled_duplicates.parquet` | POSTPROCESS | Labeled rows with duplicate SMILES, sorted by SMILES (optional) |
+| `qc/fastp.html`, `qc/fastp.json` | PREPROCESS | Preprocessing QC (paired-end only) |
 
 ---
 
-## 6. DELi CLI commands invoked, at a glance
+## 6. DELi CLI commands invoked
 
-Mapped against `src/deli/cli.py` on branch `patch`:
-
-| Pipeline process        | DELi CLI                | Purpose                                              |
-|-------------------------|-------------------------|------------------------------------------------------|
-| `DecodeChunk`           | `deli decode run`       | DNA reads → per-read decoded TSV + stats JSON        |
-| `CollectDecodeChunks`   | `deli decode collect`   | Decoded TSVs → NDJSON aggregated by (lib, bb_ids)    |
-| `MergeDecodeStatistics` | `deli decode merge-stats` | Merge per-chunk stats JSONs                        |
-| `WriteDecodeReport`     | `deli decode report`    | Stats JSON → HTML report                             |
-| `CountChunk`            | `deli decode count`     | NDJSON chunk → counts parquet (UMI-clustered)        |
-| `CollectCountChunks`    | (Polars, not DELi)      | Concatenate counts parquets via `pl.scan_parquet`    |
-| `SummarizeDecodeRun`    | `deli decode summarize` | Counts + stats → per-library summary JSON            |
-
-The DELI subworkflow therefore consumes:
-
-- one merged FASTQ (the only "data" input),
-- a selection YAML describing libraries and decode settings,
-- the DELi data dir (library/building-block reference data),
-
-and produces a counts parquet (the load-bearing output), plus a stats JSON,
-summary JSON, and HTML report as observability artifacts.
+| Pipeline process        | DELi CLI                  | Purpose                                           |
+|-------------------------|---------------------------|---------------------------------------------------|
+| `DecodeChunk`           | `deli decode run`         | DNA reads → per-read decoded TSV + stats JSON     |
+| `CollectDecodeChunks`   | `deli decode collect`     | Decoded TSVs → NDJSON aggregated by (lib, bb_ids) |
+| `MergeDecodeStatistics` | `deli decode merge-stats` | Merge per-chunk stats JSONs                       |
+| `WriteDecodeReport`     | `deli decode report`      | Stats JSON → HTML report                          |
+| `CountChunk`            | `deli decode count`       | NDJSON chunk → counts parquet (UMI-clustered)     |
+| `CollectCountChunks`    | *(Polars, not DELi)*      | Concatenate counts parquets via `pl.scan_parquet` |
+| `SummarizeDecodeRun`    | `deli decode summarize`   | Counts + stats → per-library summary JSON         |
