@@ -45,6 +45,12 @@ process GenerateDecodeYaml {
     with open('${yaml_name}', 'w') as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
     """
+
+    stub:
+    def yaml_name = "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml"
+    """
+    touch ${yaml_name}
+    """
 }
 
 // ============================================================================
@@ -77,6 +83,12 @@ process ExtractSequenceFiles {
             f.write('\\n'.join(sequence_files) + '\\n')
         else:
             f.write(sequence_files + '\\n')
+    """
+
+    stub:
+    """
+    echo stub > selection_id.txt
+    echo /dev/null > files.txt
     """
 }
 

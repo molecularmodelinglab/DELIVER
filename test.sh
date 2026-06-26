@@ -28,10 +28,10 @@ run() {
     echo "=== ${label} ==="
     if "$@"; then
         echo "PASS: ${label}"
-        ((PASS++))
+        ((++PASS))
     else
         echo "FAIL: ${label}"
-        ((FAIL++))
+        ((++FAIL))
     fi
 }
 
