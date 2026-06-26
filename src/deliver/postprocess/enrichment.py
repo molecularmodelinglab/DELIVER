@@ -6,18 +6,16 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.lib.columns import CORRECTED_COUNT, LIBRARY_ID, POLYO, RAW_COUNT, Z_SCORE, Z_SCORE_GLOBAL, Z_SCORE_LIB
+from deliver.postprocess.lib.columns import CORRECTED_COUNT, LIBRARY_ID, POLYO, Z_SCORE, Z_SCORE_GLOBAL, Z_SCORE_LIB
 from deliver.postprocess.lib.common import load_inputs
 from deliver.postprocess.lib.metrics import PolyO, z_score
 
 
 def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:
-    has_raw     = RAW_COUNT in df.columns
     has_z_score = Z_SCORE in df.columns
 
     n_possible_total = sum(math.prod(lib.values()) for lib in library_dict.values())
-    if has_raw:
-        d = df[RAW_COUNT].sum() / n_possible_total
+    d = df[CORRECTED_COUNT].sum() / n_possible_total
 
     lib_results = []
     for lib_id, lib in library_dict.items():
@@ -28,9 +26,8 @@ def enrichment(df: pl.DataFrame, library_dict: dict) -> pl.DataFrame:
         exprs = []
         if not has_z_score:
             exprs.append(z_score(df_lib[CORRECTED_COUNT], n).alias(Z_SCORE_LIB))
-        if has_raw:
-            polyo_calc = PolyO(d, df_lib[RAW_COUNT].sum(), df_lib.filter(pl.col(RAW_COUNT) > 0).height, n, n)
-            exprs.append(polyo_calc.score(polyo_calc.raw(df_lib[CORRECTED_COUNT])).alias(POLYO))
+        polyo_calc = PolyO(d, df_lib[CORRECTED_COUNT].sum(), df_lib.height, n, n)
+        exprs.append(polyo_calc.score(polyo_calc.raw(df_lib[CORRECTED_COUNT])).alias(POLYO))
         lib_results.append(df_lib.with_columns(exprs) if exprs else df_lib)
 
     df_result = pl.concat(lib_results)

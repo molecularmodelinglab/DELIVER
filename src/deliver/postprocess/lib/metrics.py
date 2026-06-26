@@ -41,9 +41,9 @@ class PolyO:
     """PolyO enrichment metric for DEL compounds and disynthons.
 
     https://doi.org/10.1093/nar/gkac173
-    d         - expected reads per possible compound globally (total reads / total possible compounds)
-    n_reads   - total raw reads in library
-    n_obs     - number of unique compounds observed (raw_count > 0)
+    d          - expected corrected reads per possible compound globally
+    n_reads    - total corrected reads in library (used for s_bar)
+    n_obs      - number of unique compounds observed
     n_possible - total possible compounds in library
     n_features - feature space for c_cpd: n_possible (compound) or n_disynthons (disynthon)
     """
