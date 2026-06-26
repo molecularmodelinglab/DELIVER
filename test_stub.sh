@@ -42,10 +42,9 @@ if [[ "${MODE}" == "fastq" ]]; then
     cat > "${PARAMS_FILE}" <<EOF
 read_1:
   - "${STUB_FASTQ}"
-counts_file: null
+counts: null
 out_dir: "${OUT_DIR}"
 deli_data_dir: "${STUB_DIR}"
-deli_dir: "${STUB_DIR}"
 selection_id:         "stub"
 target_id:            "stub"
 selection_condition:  "-"
@@ -68,10 +67,11 @@ EOF
 else
     cat > "${PARAMS_FILE}" <<EOF
 read_1: null
-counts_file: "${STUB_COUNTS}"
+counts:
+  file:   "${STUB_COUNTS}"
+  format: "deli"
 out_dir: "${OUT_DIR}"
 deli_data_dir: "${STUB_DIR}"
-deli_dir: "${STUB_DIR}"
 selection_id:         "stub"
 target_id:            "stub"
 selection_condition:  "-"
