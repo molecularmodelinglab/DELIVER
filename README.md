@@ -272,7 +272,7 @@ Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, w
 | Normalize external counts with user-specified column mapping | implemented |
 | SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
 | Deduplication + aggregation | implemented |
-| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) — singletons.parquet | implemented |
+| Per-compound enrichment scores (z_score_lib, z_score_global[3], polyo[4]) — singletons.parquet | implemented |
 | Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
 | Join singletons + disynthons into enriched.parquet (wide table) | implemented |
 | Label compounds with boolean label_* columns (count, z-score, polyo modes) — labeled.parquet | implemented |
@@ -370,9 +370,9 @@ Adds one `label_<mode>` boolean column per mode to `enriched.parquet` and writes
 ```yaml
 labeling:
   - count               # corrected_count > 5
-  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)
-  - count_zscore_global # corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1)
-  - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)
+  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)    [3]
+  - count_zscore_global # corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1) [3]
+  - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)                [4]
 ```
 
 Each mode validates that its required columns are present and fails with a clear error if they are not. `z_score_lib`/`z_score_global` modes require singleton enrichment to have been computed (not applicable if a pre-supplied `z_score` was used without running `singleton.py`).
@@ -419,4 +419,8 @@ Per-process resource settings can be adjusted in the `longleaf` profile in `pipe
 
 [1] Shifu Chen. 2025. fastp 1.0: An ultra-fast all-round tool for FASTQ data quality control and preprocessing. iMeta 2025: https://doi.org/10.1002/imt2.107
 
-[2]Wellnitz J, Novy B, Maxfield T, Lin S-H, Zhilinskaya I, Axtman M, Leisner T, Merten E, Norris-Drouin JL, Hardy BP, Pearce KH, Popov KI. (2025). *Open-Source DNA-Encoded Library informatics Package for Design, Decoding, and Analysis: DELi*. bioRxiv. https://doi.org/10.1101/2025.02.25.640184
+[2] Wellnitz J, Novy B, Maxfield T, Lin S-H, Zhilinskaya I, Axtman M, Leisner T, Merten E, Norris-Drouin JL, Hardy BP, Pearce KH, Popov KI. (2025). *Open-Source DNA-Encoded Library informatics Package for Design, Decoding, and Analysis: DELi*. bioRxiv. https://doi.org/10.1101/2025.02.25.640184
+
+[3] Faver JC, Riehle K, Lancia DR Jr., Milbank JBJ, Kollmann CS, Simmons N, Yu Z, Matzuk MM. (2019). Quantitative Comparison of Enrichment from DNA-Encoded Chemical Library Selections. *ACS Combinatorial Science*, 21(2), 75–82. https://doi.org/10.1021/acscombsci.8b00116
+
+[4] Chen Q, Li Y, Lin C, Chen L, Luo H, Xia S, Liu C, Cheng X, Liu C, Li J, Dou D. (2022). Expanding the DNA-encoded library toolbox: identifying small molecules targeting RNA. *Nucleic Acids Research*, 50(12), e67. https://doi.org/10.1093/nar/gkac173
