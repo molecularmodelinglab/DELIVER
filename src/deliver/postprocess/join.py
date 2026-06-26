@@ -13,6 +13,7 @@ from deliver.postprocess.lib.columns import (
 )
 
 _METRIC_COLS = [CORRECTED_COUNT, RAW_COUNT, TOT_COMPOUNDS, MEAN_COUNT, STD_COUNT, Z_SCORE_LIB, Z_SCORE_GLOBAL, POLYO]
+_SMILES = "SMILES"
 
 
 def _pair_from_path(path: Path) -> str:
@@ -41,6 +42,16 @@ def join(singletons: pl.DataFrame, disynthon_files: list[Path]) -> pl.DataFrame:
     return result
 
 
+def smiles_duplicates(enriched: pl.DataFrame) -> pl.DataFrame | None:
+    """Return rows where SMILES appears more than once, sorted by SMILES. None if no SMILES or no duplicates."""
+    if _SMILES not in enriched.columns:
+        return None
+    dupes = enriched.filter(pl.col(_SMILES).is_not_null() & pl.col(_SMILES).is_duplicated())
+    if len(dupes) == 0:
+        return None
+    return dupes.sort(_SMILES)
+
+
 def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input",      required=True,        help="Singletons parquet file.")
@@ -55,7 +66,14 @@ def main(args=None):
 
     singletons = pl.read_parquet(input_path)
     disynthon_files = [Path(p) for p in parsed.disynthons]
-    join(singletons, disynthon_files).write_parquet(parsed.output)
+    enriched = join(singletons, disynthon_files)
+    enriched.write_parquet(parsed.output)
+
+    dupes = smiles_duplicates(enriched)
+    if dupes is not None:
+        output_path = Path(parsed.output)
+        dupes_path = output_path.with_name(output_path.stem + "_duplicates.parquet")
+        dupes.write_parquet(dupes_path)
 
 
 if __name__ == "__main__":
