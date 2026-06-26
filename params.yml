@@ -145,7 +145,7 @@ save_failed: false
 
 # smiles: optional SMILES lookup configuration.
 # If provided, SMILES are added to each compound after normalization and
-# carried through to enrichment.parquet. Disynthons are not affected.
+# carried through to singletons.parquet. Disynthons are not affected.
 # compound_col - column name for compound ID in your SMILES files
 # smiles_col   - column name for SMILES in your SMILES files
 # files        - mapping of library_id to sorted enumerated parquet file
