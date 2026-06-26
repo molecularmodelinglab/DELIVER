@@ -12,7 +12,8 @@
  * - counts.parquet from DELI (or pre-existing)
  *
  * Output:
- * - enrichment.parquet (published to out_dir)
+ * - singletons.parquet  (compound-level enrichment metrics)
+ * - disynthon_*.parquet (disynthon-level enrichment metrics, one file per cycle pair)
  *
  * GCS-specific notes:
  * - Input parquet staged from GCS to container automatically
@@ -191,8 +192,8 @@ process MERGE_SMILES {
     """
 }
 
-process ENRICHMENT {
-    tag "enrichment"
+process SINGLETON {
+    tag "singleton"
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
@@ -200,15 +201,15 @@ process ENRICHMENT {
     path library_dict
 
     output:
-    path "enrichment.parquet"
-    path "disynthons_*.parquet"
+    path "singletons.parquet"
+    path "disynthon_*.parquet"
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
-        --output       enrichment.parquet
+        --output       singletons.parquet
 
     python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
         --input        ${deduplicated_parquet} \
@@ -218,8 +219,8 @@ process ENRICHMENT {
 
     stub:
     """
-    touch enrichment.parquet
-    touch disynthons_AB.parquet
+    touch singletons.parquet
+    touch disynthon_AB.parquet
     """
 }
 
@@ -268,10 +269,10 @@ workflow POSTPROCESS {
     }
 
     // Step 3: Enrichment analysis
-    ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
+    SINGLETON(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
 
     emit:
-    enrichment   = ENRICHMENT.out[0]
-    disynthons   = ENRICHMENT.out[1]
+    singletons   = SINGLETON.out[0]
+    disynthons   = SINGLETON.out[1]
     library_dict = BUILD_LIBRARY_DICT.out
 }

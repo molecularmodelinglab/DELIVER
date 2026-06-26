@@ -115,7 +115,7 @@ def main(args=None):
 
     for col1, col2 in combinations(_cycle_cols(library_dict), 2):
         name = col1 + col2
-        disynthon_counts(df, col1, col2, library_dict).write_parquet(output_dir / f"disynthons_{name}.parquet")
+        disynthon_counts(df, col1, col2, library_dict).write_parquet(output_dir / f"disynthon_{name}.parquet")
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
-from deliver.postprocess.enrichment import main as enrichment
+from deliver.postprocess.singleton import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
 from deliver.postprocess.normalize_custom import main as normalize_custom
 
@@ -552,19 +552,19 @@ def library_dict_json(tmp_path):
 
 class TestEnrichment:
     def test_runs_and_writes_output(self, normalized_parquet, library_dict_json, tmp_path):
-        out = tmp_path / "enrichment.parquet"
+        out = tmp_path / "singletons.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         assert out.exists()
 
     def test_output_has_z_score_columns(self, normalized_parquet, library_dict_json, tmp_path):
-        out = tmp_path / "enrichment.parquet"
+        out = tmp_path / "singletons.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
         assert "z_score_lib" in df.columns
         assert "z_score_global" in df.columns
 
     def test_output_has_polyo(self, normalized_parquet, library_dict_json, tmp_path):
-        out = tmp_path / "enrichment.parquet"
+        out = tmp_path / "singletons.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
         assert "polyo" in df.columns
@@ -629,7 +629,7 @@ class TestEnrichment:
         assert result["polyo"][1] == pytest.approx(0.073765, rel=1e-4)
 
     def test_output_row_count_unchanged(self, normalized_parquet, library_dict_json, tmp_path):
-        out = tmp_path / "enrichment.parquet"
+        out = tmp_path / "singletons.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
         assert len(df) == 3
@@ -740,30 +740,30 @@ class TestDisynthons:
     def test_runs_and_writes_output(self, tmp_path):
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(tmp_path / "out")])
-        assert (tmp_path / "out" / "disynthons_AB.parquet").exists()
+        assert (tmp_path / "out" / "disynthon_AB.parquet").exists()
 
     def test_3_cycle_produces_ab_bc_ac(self, tmp_path):
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        assert (out / "disynthons_AB.parquet").exists()
-        assert (out / "disynthons_BC.parquet").exists()
-        assert (out / "disynthons_AC.parquet").exists()
+        assert (out / "disynthon_AB.parquet").exists()
+        assert (out / "disynthon_BC.parquet").exists()
+        assert (out / "disynthon_AC.parquet").exists()
 
     def test_2_cycle_produces_only_ab(self, tmp_path):
         inp, lib = self._write_input(tmp_path, [6, 2], cycles=2)
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        assert (out / "disynthons_AB.parquet").exists()
-        assert not (out / "disynthons_BC.parquet").exists()
-        assert not (out / "disynthons_AC.parquet").exists()
+        assert (out / "disynthon_AB.parquet").exists()
+        assert not (out / "disynthon_BC.parquet").exists()
+        assert not (out / "disynthon_AC.parquet").exists()
 
     def test_ab_aggregates_over_c(self, tmp_path):
         # A1-B1: 4+2=6, A2-B1: 1+1=2
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
         assert df["corrected_count"].to_list() == [6, 2]
 
     def test_ab_statistics(self, tmp_path):
@@ -775,7 +775,7 @@ class TestDisynthons:
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
         assert df["tot_compounds"].to_list() == [2, 2]
         assert df["mean_count"].to_list() == pytest.approx([3.0, 1.0])
         assert df["std_count"].to_list() == pytest.approx([1.0, 0.0])
@@ -801,7 +801,7 @@ class TestDisynthons:
         lib.write_text(json.dumps(lib_dict))
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        ab = pl.read_parquet(out / "disynthons_AB.parquet").sort(["library_id", "A", "B"])
+        ab = pl.read_parquet(out / "disynthon_AB.parquet").sort(["library_id", "A", "B"])
         assert ab["library_id"].to_list() == ["L01", "L02"]
         assert ab["corrected_count"].to_list() == [6, 3]
         assert ab["tot_compounds"].to_list() == [2, 1]
@@ -829,7 +829,7 @@ class TestDisynthons:
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet")
+        df = pl.read_parquet(out / "disynthon_AB.parquet")
         assert "polyo" in df.columns
         assert df["polyo"].is_finite().all()
 
@@ -838,7 +838,7 @@ class TestDisynthons:
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
         assert df["polyo"][0] > df["polyo"][1]
 
     def test_polyo_values(self, tmp_path):
@@ -848,7 +848,7 @@ class TestDisynthons:
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
 
         assert df["polyo"][0] == pytest.approx(0.163592, rel=1e-4)
         assert df["polyo"][1] == pytest.approx(0.115179, rel=1e-4)
@@ -872,7 +872,7 @@ class TestDisynthons:
         lib.write_text(json.dumps({"L01": {"A": 2, "B": 1, "C": 2}}))
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        result = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
+        result = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
 
         assert result["polyo"][0] == pytest.approx(0.140349, rel=1e-4)
         assert result["polyo"][1] == pytest.approx(0.096922, rel=1e-4)
@@ -908,9 +908,9 @@ class TestDisynthonsComprehensive:
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         denom_norm = 5 * math.sqrt(3)  # sqrt(3.75) * sqrt(20)
         return {
-            "AB": pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"]),
-            "BC": pl.read_parquet(out / "disynthons_BC.parquet").sort(["B", "C"]),
-            "AC": pl.read_parquet(out / "disynthons_AC.parquet").sort(["A", "C"]),
+            "AB": pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"]),
+            "BC": pl.read_parquet(out / "disynthon_BC.parquet").sort(["B", "C"]),
+            "AC": pl.read_parquet(out / "disynthon_AC.parquet").sort(["A", "C"]),
             "denom_norm": denom_norm,
         }
 
@@ -1173,7 +1173,7 @@ class TestDisynthonsOptionalRaw:
         inp, lib = self._write_input(tmp_path, include_raw=False)
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet")
+        df = pl.read_parquet(out / "disynthon_AB.parquet")
         assert "polyo" in df.columns
         assert "z_score_lib" in df.columns
 
@@ -1181,5 +1181,5 @@ class TestDisynthonsOptionalRaw:
         inp, lib = self._write_input(tmp_path, include_raw=True)
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
-        df = pl.read_parquet(out / "disynthons_AB.parquet")
+        df = pl.read_parquet(out / "disynthon_AB.parquet")
         assert "polyo" in df.columns
