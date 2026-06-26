@@ -106,8 +106,8 @@ nextflow run "${DELIVER_DIR}/pipeline/main.nf" \
     -stub-run
 
 # ---------------------------------------------------------------------------
-# Cleanup
+# Cleanup (|| true: transient "Directory not empty" errors on Lustre are benign)
 # ---------------------------------------------------------------------------
-rm -rf "${STUB_DIR}" "${WORK_DIR}" "${OUT_DIR}"
+rm -rf "${STUB_DIR}" "${WORK_DIR}" "${OUT_DIR}" || true
 
 echo "Stub test passed."
