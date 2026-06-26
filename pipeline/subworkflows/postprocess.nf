@@ -286,7 +286,13 @@ workflow POSTPROCESS {
     // Path channel: merged counts parquet from DELI (or pre-existing)
 
     main:
-    BUILD_LIBRARY_DICT()
+    def lib_dict_ch
+    if (params.library_dict) {
+        lib_dict_ch = Channel.fromPath(params.library_dict)
+    } else {
+        BUILD_LIBRARY_DICT()
+        lib_dict_ch = BUILD_LIBRARY_DICT.out
+    }
 
     log.info """
     ========================================
@@ -321,7 +327,7 @@ workflow POSTPROCESS {
     }
 
     // Step 3: Enrichment analysis
-    SINGLETON(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
+    SINGLETON(DEDUPLICATE.out.dedup, lib_dict_ch)
 
     // Step 4: Join singletons and disynthons into a single enriched table
     JOIN(SINGLETON.out[0], SINGLETON.out[1])
@@ -335,5 +341,5 @@ workflow POSTPROCESS {
     enriched     = JOIN.out.enriched
     singletons   = SINGLETON.out[0]
     disynthons   = SINGLETON.out[1]
-    library_dict = BUILD_LIBRARY_DICT.out
+    library_dict = lib_dict_ch
 }
