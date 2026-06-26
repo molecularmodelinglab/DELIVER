@@ -224,6 +224,31 @@ process SINGLETON {
     """
 }
 
+process JOIN {
+    tag "join"
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path singletons_parquet
+    path disynthon_files
+
+    output:
+    path "enriched.parquet"
+
+    script:
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/join.py \
+        --input      ${singletons_parquet} \
+        --disynthons ${disynthon_files} \
+        --output     enriched.parquet
+    """
+
+    stub:
+    """
+    touch enriched.parquet
+    """
+}
+
 // ============================================================================
 // POSTPROCESS WORKFLOW
 // ============================================================================
@@ -271,7 +296,11 @@ workflow POSTPROCESS {
     // Step 3: Enrichment analysis
     SINGLETON(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
 
+    // Step 4: Join singletons and disynthons into a single enriched table
+    JOIN(SINGLETON.out[0], SINGLETON.out[1])
+
     emit:
+    enriched     = JOIN.out
     singletons   = SINGLETON.out[0]
     disynthons   = SINGLETON.out[1]
     library_dict = BUILD_LIBRARY_DICT.out

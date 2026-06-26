@@ -12,6 +12,7 @@ from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
+from deliver.postprocess.join import main as join_cli, join as join_df
 from deliver.postprocess.singleton import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
 from deliver.postprocess.normalize_custom import main as normalize_custom
@@ -1183,3 +1184,127 @@ class TestDisynthonsOptionalRaw:
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         df = pl.read_parquet(out / "disynthon_AB.parquet")
         assert "polyo" in df.columns
+
+
+class TestJoin:
+    """Tests for join.py — joining singletons + disynthon tables into enriched.parquet."""
+
+    def _singletons(self) -> pl.DataFrame:
+        return pl.DataFrame({
+            "compound_id":      ["L01-A1-B1-C1", "L01-A1-B2-C1", "L01-A2-B1-C2"],
+            "library_id":       ["L01", "L01", "L01"],
+            "A":                ["A1", "A1", "A2"],
+            "B":                ["B1", "B2", "B1"],
+            "C":                ["C1", "C1", "C2"],
+            "corrected_count":  [10, 5, 1],
+            "z_score_lib":      [2.0, 1.0, 0.1],
+            "z_score_global":   [2.0, 1.0, 0.1],
+            "polyo":            [0.9, 0.5, 0.1],
+        })
+
+    def _disynthon_ab(self) -> pl.DataFrame:
+        return pl.DataFrame({
+            "library_id":       ["L01", "L01", "L01"],
+            "A":                ["A1", "A1", "A2"],
+            "B":                ["B1", "B2", "B1"],
+            "corrected_count":  [15, 5, 1],
+            "tot_compounds":    [2, 2, 2],
+            "mean_count":       [7.5, 2.5, 0.5],
+            "std_count":        [3.5, 0.5, 0.5],
+            "z_score_lib":      [3.0, 1.0, 0.0],
+            "z_score_global":   [3.0, 1.0, 0.0],
+            "polyo":            [0.95, 0.4, 0.05],
+        })
+
+    def test_join_adds_ab_prefix_columns(self, tmp_path):
+        s = self._singletons()
+        ab = self._disynthon_ab()
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        ab.write_parquet(ab_path)
+        result = join_df(s, [ab_path])
+        assert "ab_polyo" in result.columns
+        assert "ab_z_score_lib" in result.columns
+        assert "ab_z_score_global" in result.columns
+        assert "ab_corrected_count" in result.columns
+        assert "ab_tot_compounds" in result.columns
+        assert "ab_mean_count" in result.columns
+        assert "ab_std_count" in result.columns
+
+    def test_join_preserves_all_singleton_rows(self, tmp_path):
+        s = self._singletons()
+        ab = self._disynthon_ab()
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        ab.write_parquet(ab_path)
+        result = join_df(s, [ab_path])
+        assert len(result) == len(s)
+
+    def test_join_values_correct(self, tmp_path):
+        s = self._singletons()
+        ab = self._disynthon_ab()
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        ab.write_parquet(ab_path)
+        result = join_df(s, [ab_path]).sort(["A", "B", "C"])
+        # L01-A1-B1-C1 should get ab_polyo from A1/B1 row = 0.95
+        row = result.filter((pl.col("A") == "A1") & (pl.col("B") == "B1")).row(0, named=True)
+        assert abs(row["ab_polyo"] - 0.95) < 1e-6
+
+    def test_join_no_disynthon_columns_absent_without_file(self, tmp_path):
+        s = self._singletons()
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        self._disynthon_ab().write_parquet(ab_path)
+        result = join_df(s, [ab_path])
+        # BC and AC were not provided — no bc_* or ac_* columns
+        assert not any(c.startswith("bc_") for c in result.columns)
+        assert not any(c.startswith("ac_") for c in result.columns)
+
+    def test_join_multiple_pairs(self, tmp_path):
+        s = self._singletons()
+        ab = self._disynthon_ab()
+        bc = pl.DataFrame({
+            "library_id":       ["L01", "L01"],
+            "B":                ["B1", "B2"],
+            "C":                ["C1", "C1"],
+            "corrected_count":  [11, 5],
+            "tot_compounds":    [2, 2],
+            "mean_count":       [5.5, 2.5],
+            "std_count":        [1.5, 0.5],
+            "z_score_lib":      [2.5, 1.0],
+            "z_score_global":   [2.5, 1.0],
+            "polyo":            [0.8, 0.3],
+        })
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        bc_path = tmp_path / "disynthon_BC.parquet"
+        ab.write_parquet(ab_path)
+        bc.write_parquet(bc_path)
+        result = join_df(s, [ab_path, bc_path])
+        assert "ab_polyo" in result.columns
+        assert "bc_polyo" in result.columns
+        assert len(result) == len(s)
+
+    def test_join_singleton_columns_unchanged(self, tmp_path):
+        s = self._singletons()
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        self._disynthon_ab().write_parquet(ab_path)
+        result = join_df(s, [ab_path])
+        for col in s.columns:
+            assert col in result.columns
+        assert result["polyo"].to_list() == s["polyo"].to_list()
+
+    def test_join_cli_writes_output(self, tmp_path):
+        s = self._singletons()
+        ab = self._disynthon_ab()
+        sin_path = tmp_path / "singletons.parquet"
+        ab_path  = tmp_path / "disynthon_AB.parquet"
+        out_path = tmp_path / "enriched.parquet"
+        s.write_parquet(sin_path)
+        ab.write_parquet(ab_path)
+        join_cli(["--input", str(sin_path), "--disynthons", str(ab_path), "--output", str(out_path)])
+        assert out_path.exists()
+        df = pl.read_parquet(out_path)
+        assert "ab_polyo" in df.columns
+
+    def test_join_missing_input_fails(self, tmp_path):
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        self._disynthon_ab().write_parquet(ab_path)
+        with pytest.raises(SystemExit):
+            join_cli(["--input", str(tmp_path / "nonexistent.parquet"), "--disynthons", str(ab_path), "--output", str(tmp_path / "out.parquet")])
