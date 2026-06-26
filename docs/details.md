@@ -160,7 +160,14 @@ Published to `out_dir`.
 Runs after DELI (or directly from a pre-existing counts parquet). All steps call
 small Python scripts from `src/deliver/postprocess/`.
 
-### Step 1 — BUILD_LIBRARY_DICT
+### Step 1 — BUILD_LIBRARY_DICT (or pre-computed)
+
+If `params.library_dict` is set, this step is skipped entirely and the provided JSON
+is used directly. This is useful when running in counts mode on a machine without DELi
+data — the file can be generated once from any machine that has `deli_data_dir` and
+reused across runs.
+
+Otherwise:
 
 ```
 build_library_dict.py --deli-data-dir <deli_data_dir> --output library_dict.json

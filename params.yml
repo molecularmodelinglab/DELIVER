@@ -60,7 +60,13 @@ counts: null
 
 # deli_data_dir: path to the DELi data directory containing library definitions,
 #                building block tables, etc. (see DELi docs for structure)
+#                Not required when library_dict is set.
 deli_data_dir: "/path/to/deli_data"
+
+# library_dict: path to a pre-computed library_dict.json (built by build_library_dict.py).
+#   When set, BUILD_LIBRARY_DICT is skipped and deli_data_dir is not needed.
+#   Useful when running in counts mode on a machine without DELi data.
+library_dict: null
 
 # -----------------------------------------------------------------------
 # SELECTION METADATA — written into the generated decode.yaml and used to
