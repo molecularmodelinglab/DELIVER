@@ -233,7 +233,8 @@ process JOIN {
     path disynthon_files
 
     output:
-    path "enriched.parquet"
+    path "enriched.parquet",            emit: enriched
+    path "enriched_duplicates.parquet", emit: duplicates, optional: true
 
     script:
     """
@@ -300,7 +301,7 @@ workflow POSTPROCESS {
     JOIN(SINGLETON.out[0], SINGLETON.out[1])
 
     emit:
-    enriched     = JOIN.out
+    enriched     = JOIN.out.enriched
     singletons   = SINGLETON.out[0]
     disynthons   = SINGLETON.out[1]
     library_dict = BUILD_LIBRARY_DICT.out

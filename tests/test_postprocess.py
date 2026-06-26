@@ -12,7 +12,7 @@ from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
-from deliver.postprocess.join import main as join_cli, join as join_df
+from deliver.postprocess.join import main as join_cli, join as join_df, smiles_duplicates
 from deliver.postprocess.singleton import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
 from deliver.postprocess.normalize_custom import main as normalize_custom
@@ -1308,3 +1308,104 @@ class TestJoin:
         self._disynthon_ab().write_parquet(ab_path)
         with pytest.raises(SystemExit):
             join_cli(["--input", str(tmp_path / "nonexistent.parquet"), "--disynthons", str(ab_path), "--output", str(tmp_path / "out.parquet")])
+
+
+class TestSmilesDuplicates:
+    """Tests for smiles_duplicates() in join.py."""
+
+    def _enriched(self, smiles: list[str | None]) -> pl.DataFrame:
+        n = len(smiles)
+        return pl.DataFrame({
+            "compound_id":    [f"L01-A{i}-B{i}-C{i}" for i in range(n)],
+            "library_id":     ["L01"] * n,
+            "corrected_count": list(range(1, n + 1)),
+            "polyo":          [float(i) / n for i in range(n)],
+            "SMILES":         smiles,
+        })
+
+    def test_no_smiles_column_returns_none(self):
+        df = pl.DataFrame({"compound_id": ["a", "b"], "corrected_count": [1, 2]})
+        assert smiles_duplicates(df) is None
+
+    def test_no_duplicates_returns_none(self):
+        df = self._enriched(["CC", "CCC", "CCCC"])
+        assert smiles_duplicates(df) is None
+
+    def test_duplicates_returned(self):
+        df = self._enriched(["CC", "CCC", "CC"])
+        result = smiles_duplicates(df)
+        assert result is not None
+        assert len(result) == 2
+        assert set(result["SMILES"].to_list()) == {"CC"}
+
+    def test_sorted_by_smiles(self):
+        df = self._enriched(["ZZZ", "AAA", "ZZZ", "AAA"])
+        result = smiles_duplicates(df)
+        assert result is not None
+        assert result["SMILES"].to_list() == ["AAA", "AAA", "ZZZ", "ZZZ"]
+
+    def test_null_smiles_excluded(self):
+        df = self._enriched([None, None, "CC"])
+        assert smiles_duplicates(df) is None
+
+    def test_unique_not_included(self):
+        # "CC" duplicated, "CCC" unique — only "CC" rows in result
+        df = self._enriched(["CC", "CCC", "CC"])
+        result = smiles_duplicates(df)
+        assert result is not None
+        assert "CCC" not in result["SMILES"].to_list()
+
+    def test_cli_writes_duplicates_file(self, tmp_path):
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        pl.DataFrame({
+            "library_id": ["L01"], "A": ["A0"], "B": ["B0"],
+            "corrected_count": [1], "tot_compounds": [1], "mean_count": [1.0],
+            "std_count": [0.0], "z_score_lib": [0.0], "z_score_global": [0.0], "polyo": [0.0],
+        }).write_parquet(ab_path)
+
+        singletons = pl.DataFrame({
+            "compound_id":     ["L01-A0-B0-C0", "L01-A0-B0-C1"],
+            "library_id":      ["L01", "L01"],
+            "A":               ["A0", "A0"],
+            "B":               ["B0", "B0"],
+            "C":               ["C0", "C1"],
+            "corrected_count": [5, 3],
+            "polyo":           [0.9, 0.5],
+            "SMILES":          ["CC", "CC"],
+        })
+        sin_path = tmp_path / "enriched.parquet"
+        out_path = tmp_path / "enriched.parquet"
+        singletons.write_parquet(sin_path)
+
+        join_cli(["--input", str(sin_path), "--disynthons", str(ab_path), "--output", str(out_path)])
+
+        dupes_path = tmp_path / "enriched_duplicates.parquet"
+        assert dupes_path.exists()
+        df = pl.read_parquet(dupes_path)
+        assert len(df) == 2
+        assert df["SMILES"].to_list() == ["CC", "CC"]
+
+    def test_cli_no_duplicates_file_absent(self, tmp_path):
+        ab_path = tmp_path / "disynthon_AB.parquet"
+        pl.DataFrame({
+            "library_id": ["L01"], "A": ["A0"], "B": ["B0"],
+            "corrected_count": [1], "tot_compounds": [1], "mean_count": [1.0],
+            "std_count": [0.0], "z_score_lib": [0.0], "z_score_global": [0.0], "polyo": [0.0],
+        }).write_parquet(ab_path)
+
+        singletons = pl.DataFrame({
+            "compound_id":     ["L01-A0-B0-C0", "L01-A0-B0-C1"],
+            "library_id":      ["L01", "L01"],
+            "A":               ["A0", "A0"],
+            "B":               ["B0", "B0"],
+            "C":               ["C0", "C1"],
+            "corrected_count": [5, 3],
+            "polyo":           [0.9, 0.5],
+            "SMILES":          ["CC", "CCC"],  # unique SMILES
+        })
+        sin_path = tmp_path / "enriched.parquet"
+        singletons.write_parquet(sin_path)
+
+        join_cli(["--input", str(sin_path), "--disynthons", str(ab_path), "--output", str(sin_path)])
+
+        assert not (tmp_path / "enriched_duplicates.parquet").exists()
