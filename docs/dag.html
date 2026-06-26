@@ -59,8 +59,8 @@ flowchart TB
     v29[" "]
     v38["report"]
     v46["summary"]
-    v51["disynthons"]
-    v52["enrichment"]
+    v52[" "]
+    v53["enriched"]
     end
     subgraph "DELI [DELI]"
     v16(["GenerateDecodeYaml"])
@@ -84,7 +84,8 @@ flowchart TB
     v47(["BUILD_LIBRARY_DICT"])
     v48(["NORMALIZE"])
     v49(["DEDUPLICATE"])
-    v50(["ENRICHMENT"])
+    v50(["SINGLETON"])
+    v51(["JOIN"])
     end
     v15(( ))
     v0 --> v1
@@ -139,8 +140,9 @@ flowchart TB
     v47 --> v50
     v48 --> v49
     v49 --> v50
-    v50 --> v52
     v50 --> v51
+    v51 --> v53
+    v51 --> v52
 
 </pre>
 <script type="module">

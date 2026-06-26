@@ -144,6 +144,10 @@ debug: false
 # config_file: optional path to a custom DELi config file
 # config_file: null
 
+smiles: null
+on_duplicate_compound_id: "fail"
+labeling: null
+
 
 
 
