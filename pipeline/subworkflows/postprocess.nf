@@ -250,6 +250,32 @@ process JOIN {
     """
 }
 
+process LABEL {
+    tag "label"
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path enriched_parquet
+
+    output:
+    path "labeled.parquet",            emit: labeled
+    path "labeled_duplicates.parquet", emit: duplicates, optional: true
+
+    script:
+    def modes = params.labeling.join(" ")
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/label.py \
+        --input  ${enriched_parquet} \
+        --modes  ${modes} \
+        --output labeled.parquet
+    """
+
+    stub:
+    """
+    touch labeled.parquet
+    """
+}
+
 // ============================================================================
 // POSTPROCESS WORKFLOW
 // ============================================================================
@@ -299,6 +325,11 @@ workflow POSTPROCESS {
 
     // Step 4: Join singletons and disynthons into a single enriched table
     JOIN(SINGLETON.out[0], SINGLETON.out[1])
+
+    // Step 5: Label compounds (optional — skipped when params.labeling is null)
+    if (params.labeling) {
+        LABEL(JOIN.out.enriched)
+    }
 
     emit:
     enriched     = JOIN.out.enriched

@@ -156,3 +156,23 @@ smiles: null
 #   "sum"  — merge duplicate rows by summing corrected_count and raw_count
 #            If a SMILES column is present, all duplicate rows must have the same SMILES — fails otherwise.
 on_duplicate_compound_id: "fail"
+
+# labeling: list of labeling modes to apply to the enriched table (adds a label_{mode} boolean column).
+#   null — no labeling (default)
+#
+# Available modes:
+#   count               — corrected_count > 5
+#   count_zscore_lib    — corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)
+#   count_zscore_global — corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1)
+#   count_polyo         — corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 1)
+#
+# Output: labeled.parquet (with label_* columns added to enriched table).
+#         labeled_duplicates.parquet — same rows as labeled.parquet but filtered to duplicate SMILES,
+#         sorted by SMILES (only written if SMILES column is present and duplicates exist).
+#
+# labeling:
+#   - count
+#   - count_zscore_lib
+#   - count_zscore_global
+#   - count_polyo
+labeling: null

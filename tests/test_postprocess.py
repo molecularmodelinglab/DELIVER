@@ -13,6 +13,7 @@ from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.join import main as join_cli, join as join_df, smiles_duplicates
+from deliver.postprocess.label import main as label_cli, label as label_df, MODES as LABEL_MODES
 from deliver.postprocess.singleton import main as enrichment
 from deliver.postprocess.normalize import main as normalize, normalize as normalize_df
 from deliver.postprocess.normalize_custom import main as normalize_custom
@@ -1409,3 +1410,165 @@ class TestSmilesDuplicates:
         join_cli(["--input", str(sin_path), "--disynthons", str(ab_path), "--output", str(sin_path)])
 
         assert not (tmp_path / "enriched_duplicates.parquet").exists()
+
+
+class TestLabel:
+    """Tests for label.py — compound labeling on the enriched table."""
+
+    def _enriched(self, *, with_disynthons: bool = False, with_smiles: bool = False) -> pl.DataFrame:
+        data = {
+            "compound_id":    ["cpd1", "cpd2", "cpd3", "cpd4"],
+            "library_id":     ["L01"] * 4,
+            "corrected_count": [10, 10, 3, 10],
+            "z_score_lib":    [2.0, 0.5, 2.0, 0.5],
+            "z_score_global": [2.0, 0.5, 2.0, 0.5],
+            "polyo":          [5.0, 5.0, 5.0, 0.5],
+        }
+        if with_disynthons:
+            data["ab_z_score_lib"]    = [0.5, 2.0, 0.5, 0.5]
+            data["ab_z_score_global"] = [0.5, 2.0, 0.5, 0.5]
+            data["ab_polyo"]          = [0.5, 0.5, 0.5, 5.0]
+        if with_smiles:
+            data["SMILES"] = ["CC", "CCC", "CC", "CCCC"]
+        return pl.DataFrame(data)
+
+    # --- label_count ---
+
+    def test_count_positive_when_count_above_threshold(self):
+        df = self._enriched()
+        result = label_df(df, ["count"])
+        # cpd1, cpd2, cpd4 have corrected_count=10 > 5; cpd3=3
+        positives = result.filter(pl.col("label_count"))["compound_id"].to_list()
+        assert set(positives) == {"cpd1", "cpd2", "cpd4"}
+
+    def test_count_negative_when_count_below_threshold(self):
+        df = self._enriched()
+        result = label_df(df, ["count"])
+        assert not result.filter(pl.col("compound_id") == "cpd3")["label_count"][0]
+
+    # --- label_count_zscore_lib ---
+
+    def test_zscore_lib_requires_count(self):
+        # cpd3: count=3 (fails), z_score_lib=2.0 (passes) → should be negative
+        df = self._enriched()
+        result = label_df(df, ["count_zscore_lib"])
+        assert not result.filter(pl.col("compound_id") == "cpd3")["label_count_zscore_lib"][0]
+
+    def test_zscore_lib_positive_via_singleton_zscore(self):
+        # cpd1: count=10, z_score_lib=2.0 → positive
+        df = self._enriched()
+        result = label_df(df, ["count_zscore_lib"])
+        assert result.filter(pl.col("compound_id") == "cpd1")["label_count_zscore_lib"][0]
+
+    def test_zscore_lib_positive_via_disynthon(self):
+        # cpd2: count=10, z_score_lib=0.5 (fails), ab_z_score_lib=2.0 → positive
+        df = self._enriched(with_disynthons=True)
+        result = label_df(df, ["count_zscore_lib"])
+        assert result.filter(pl.col("compound_id") == "cpd2")["label_count_zscore_lib"][0]
+
+    def test_zscore_lib_negative_when_no_zscore_passes(self):
+        # cpd4: count=10, z_score_lib=0.5, ab_z_score_lib=0.5 → negative
+        df = self._enriched(with_disynthons=True)
+        result = label_df(df, ["count_zscore_lib"])
+        assert not result.filter(pl.col("compound_id") == "cpd4")["label_count_zscore_lib"][0]
+
+    # --- label_count_zscore_global ---
+
+    def test_zscore_global_positive_via_singleton(self):
+        df = self._enriched()
+        result = label_df(df, ["count_zscore_global"])
+        assert result.filter(pl.col("compound_id") == "cpd1")["label_count_zscore_global"][0]
+
+    def test_zscore_global_positive_via_disynthon(self):
+        df = self._enriched(with_disynthons=True)
+        result = label_df(df, ["count_zscore_global"])
+        assert result.filter(pl.col("compound_id") == "cpd2")["label_count_zscore_global"][0]
+
+    # --- label_count_polyo ---
+
+    def test_polyo_positive_via_singleton(self):
+        # cpd1: count=10, polyo=5.0 > 4 → positive
+        df = self._enriched()
+        result = label_df(df, ["count_polyo"])
+        assert result.filter(pl.col("compound_id") == "cpd1")["label_count_polyo"][0]
+
+    def test_polyo_positive_via_disynthon(self):
+        # cpd4: count=10, polyo=0.5 (fails), ab_polyo=5.0 > 4 → positive
+        df = self._enriched(with_disynthons=True)
+        result = label_df(df, ["count_polyo"])
+        assert result.filter(pl.col("compound_id") == "cpd4")["label_count_polyo"][0]
+
+    def test_polyo_negative_when_no_polyo_passes(self):
+        # cpd2: count=10, polyo=5.0 > 4 → positive (singleton threshold passes)
+        # let's test cpd4 without disynthons: count=10, polyo=0.5 → negative
+        df = self._enriched(with_disynthons=False)
+        result = label_df(df, ["count_polyo"])
+        assert not result.filter(pl.col("compound_id") == "cpd4")["label_count_polyo"][0]
+
+    # --- multiple modes ---
+
+    def test_multiple_modes_adds_multiple_columns(self):
+        df = self._enriched()
+        result = label_df(df, ["count", "count_zscore_lib"])
+        assert "label_count" in result.columns
+        assert "label_count_zscore_lib" in result.columns
+
+    def test_unknown_mode_raises(self):
+        df = self._enriched()
+        with pytest.raises(ValueError, match="Unknown labeling mode"):
+            label_df(df, ["bogus_mode"])
+
+    def test_missing_required_column_raises(self):
+        df = pl.DataFrame({"compound_id": ["cpd1"], "corrected_count": [10]})
+        with pytest.raises(ValueError, match="z_score_lib"):
+            label_df(df, ["count_zscore_lib"])
+
+    def test_missing_count_column_raises(self):
+        df = pl.DataFrame({"compound_id": ["cpd1"], "z_score_lib": [2.0]})
+        with pytest.raises(ValueError, match="corrected_count"):
+            label_df(df, ["count_zscore_lib"])
+
+    def test_missing_column_error_via_cli(self, tmp_path):
+        inp = tmp_path / "enriched.parquet"
+        out = tmp_path / "labeled.parquet"
+        pl.DataFrame({"compound_id": ["cpd1"], "corrected_count": [10]}).write_parquet(inp)
+        with pytest.raises(SystemExit):
+            label_cli(["--input", str(inp), "--modes", "count_polyo", "--output", str(out)])
+
+    def test_all_modes_available(self):
+        assert set(LABEL_MODES) == {"count", "count_zscore_lib", "count_zscore_global", "count_polyo"}
+
+    # --- CLI ---
+
+    def test_cli_writes_output(self, tmp_path):
+        inp = tmp_path / "enriched.parquet"
+        out = tmp_path / "labeled.parquet"
+        self._enriched().write_parquet(inp)
+        label_cli(["--input", str(inp), "--modes", "count", "--output", str(out)])
+        assert out.exists()
+        assert "label_count" in pl.read_parquet(out).columns
+
+    def test_cli_writes_smiles_duplicates(self, tmp_path):
+        inp = tmp_path / "enriched.parquet"
+        out = tmp_path / "labeled.parquet"
+        self._enriched(with_smiles=True).write_parquet(inp)
+        label_cli(["--input", str(inp), "--modes", "count", "--output", str(out)])
+        dupes = tmp_path / "labeled_duplicates.parquet"
+        assert dupes.exists()
+        df = pl.read_parquet(dupes)
+        # cpd1 and cpd3 share SMILES="CC"
+        assert len(df) == 2
+        assert all(s == "CC" for s in df["SMILES"].to_list())
+
+    def test_cli_no_duplicates_file_when_smiles_unique(self, tmp_path):
+        inp = tmp_path / "enriched.parquet"
+        out = tmp_path / "labeled.parquet"
+        df = self._enriched()
+        df = df.with_columns(pl.Series("SMILES", ["CC", "CCC", "CCCC", "C"]))
+        df.write_parquet(inp)
+        label_cli(["--input", str(inp), "--modes", "count", "--output", str(out)])
+        assert not (tmp_path / "labeled_duplicates.parquet").exists()
+
+    def test_cli_missing_input_fails(self, tmp_path):
+        with pytest.raises(SystemExit):
+            label_cli(["--input", str(tmp_path / "nonexistent.parquet"), "--modes", "count", "--output", str(tmp_path / "out.parquet")])
