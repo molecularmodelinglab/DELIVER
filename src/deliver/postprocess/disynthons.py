@@ -28,13 +28,14 @@ def _total_disynthons(lib: dict) -> int:
 
 
 def _aggregate(df: pl.DataFrame, col1: str, col2: str, has_raw: bool) -> pl.DataFrame:
-    """Group by library + col1 + col2, summing counts and (if available) raw polyO values."""
+    """Group by library + col1 + col2, summing counts and raw polyO values."""
     aggs = [
         pl.col(CORRECTED_COUNT).sum(),
         (pl.col(CORRECTED_COUNT) ** 2).sum().alias("_sum_sq"),
+        pl.col(_POLYO_RAW).sum(),
     ]
     if has_raw:
-        aggs += [pl.col(RAW_COUNT).sum(), pl.col(_POLYO_RAW).sum()]
+        aggs.append(pl.col(RAW_COUNT).sum())
     return (
         df
         .filter(pl.col(col1).is_not_null() & pl.col(col2).is_not_null())
@@ -45,11 +46,9 @@ def _aggregate(df: pl.DataFrame, col1: str, col2: str, has_raw: bool) -> pl.Data
 
 
 def _add_lib_statistics(
-    df_lib: pl.DataFrame, lib: dict, col1: str, col2: str, polyo: PolyO | None,
+    df_lib: pl.DataFrame, lib: dict, col1: str, col2: str, polyo: PolyO,
 ) -> pl.DataFrame:
-    """Add tot_compounds, mean_count, std_count, z_score_lib, and polyo for one library.
-    polyo is None when raw_count is absent; in that case the polyo column is omitted.
-    """
+    """Add tot_compounds, mean_count, std_count, z_score_lib, and polyo for one library."""
     tot_compounds = math.prod(count for k, count in lib.items() if k not in {col1, col2})  # compounds per disynthon (remaining cycles' product)
     n_disynthons = lib[col1] * lib[col2]  # number of possible disynthons in the library
     df = (
@@ -63,21 +62,17 @@ def _add_lib_statistics(
         )
         .drop("_sum_sq")
     )
-    exprs = [z_score(df[CORRECTED_COUNT], n_disynthons).alias(Z_SCORE_LIB)]
-    if polyo is not None:
-        exprs.append(polyo.score(df[_POLYO_RAW]).alias(POLYO))
-    df = df.with_columns(exprs)
-    if polyo is not None:
-        df = df.drop(_POLYO_RAW)
-    return df
+    return df.with_columns([
+        z_score(df[CORRECTED_COUNT], n_disynthons).alias(Z_SCORE_LIB),
+        polyo.score(df[_POLYO_RAW]).alias(POLYO),
+    ]).drop(_POLYO_RAW)
 
 
 def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
     """Aggregate to disynthon level and compute statistics per library, then add global z-score."""
     has_raw = RAW_COUNT in df.columns
     n_possible_total = sum(math.prod(lib.values()) for lib in library_dict.values())
-    if has_raw:
-        d = df[RAW_COUNT].sum() / n_possible_total
+    d = df[CORRECTED_COUNT].sum() / n_possible_total
 
     results = []
     for lib_id, lib in library_dict.items():
@@ -88,14 +83,9 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
             continue
 
         n_possible = math.prod(lib.values())
-        if has_raw and d:
-            n_reads = df_lib_orig[RAW_COUNT].sum()
-            n_obs = df_lib_orig.filter(pl.col(RAW_COUNT) > 0).height
-            n_features = _total_disynthons(lib)
-            polyo = PolyO(d, n_reads, n_obs, n_possible, n_features)
-            df_lib_orig = df_lib_orig.with_columns(polyo.raw(df_lib_orig[CORRECTED_COUNT]).alias(_POLYO_RAW))
-        else:
-            polyo = None
+        n_features = _total_disynthons(lib)
+        polyo = PolyO(d, df_lib_orig[CORRECTED_COUNT].sum(), df_lib_orig.height, n_possible, n_features)
+        df_lib_orig = df_lib_orig.with_columns(polyo.raw(df_lib_orig[CORRECTED_COUNT]).alias(_POLYO_RAW))
 
         agg = _aggregate(df_lib_orig, col1, col2, has_raw)
         results.append(_add_lib_statistics(agg, lib, col1, col2, polyo))

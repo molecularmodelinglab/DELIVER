@@ -541,9 +541,9 @@ class TestEnrichment:
         assert result["polyo"][1] == pytest.approx(0.077659, rel=1e-4)
 
     def test_polyo_uses_corrected_count(self, tmp_path):
-        # raw_count != corrected_count: calibration uses raw, PMF uses corrected.
-        # d = (10+4)/4 = 3.5 (from raw); polyo PMF uses corrected [8, 2].
-        # If raw were used instead: polyo would be 0.302210 and 0.082903 (different).
+        # Both d and per-compound score use corrected_count throughout.
+        # d = (8+2)/4 = 2.5 (from corrected); PMF uses corrected [8, 2].
+        # If raw [10,4] were used for d instead: polyo would differ.
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB",   "LIB"],
@@ -558,8 +558,8 @@ class TestEnrichment:
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out).sort("compound_id")
 
-        assert result["polyo"][0] == pytest.approx(0.203030, rel=1e-4)
-        assert result["polyo"][1] == pytest.approx(0.083929, rel=1e-4)
+        assert result["polyo"][0] == pytest.approx(0.313062, rel=1e-4)
+        assert result["polyo"][1] == pytest.approx(0.073765, rel=1e-4)
 
     def test_output_row_count_unchanged(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "enrichment.parquet"
@@ -787,9 +787,9 @@ class TestDisynthons:
         assert df["polyo"][1] == pytest.approx(0.115179, rel=1e-4)
 
     def test_polyo_uses_corrected_count(self, tmp_path):
-        # raw_count != corrected_count: d = 8/4 = 2.0 from raw; PMF uses corrected.
-        # A1-B1: corrected [3,1] → polyo 0.133047 (not 0.163592 which raw [4,2] would give).
-        # A2-B1: corrected == raw [1,1] → same as always, 0.115179.
+        # Both d and per-compound score use corrected_count throughout.
+        # d = (3+1+1+1)/4 = 1.5 (from corrected); PMF uses corrected [3,1] and [1,1].
+        # If raw [4,2,1,1] were used for d instead: polyo would differ.
         df = pl.DataFrame({
             "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-2-1-1", "L01-2-1-2"],
             "library_id":      ["L01"] * 4,
@@ -807,8 +807,8 @@ class TestDisynthons:
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         result = pl.read_parquet(out / "disynthons_AB.parquet").sort(["A", "B"])
 
-        assert result["polyo"][0] == pytest.approx(0.133047, rel=1e-4)
-        assert result["polyo"][1] == pytest.approx(0.115179, rel=1e-4)
+        assert result["polyo"][0] == pytest.approx(0.140349, rel=1e-4)
+        assert result["polyo"][1] == pytest.approx(0.096922, rel=1e-4)
 
 
 class TestDisynthonsComprehensive:
@@ -1031,7 +1031,7 @@ class TestEnrichmentOptionalRaw:
         p.write_text(json.dumps({"LIB": {"A": 2}}))
         return str(p)
 
-    def test_no_raw_count_skips_polyo(self, tmp_path):
+    def test_no_raw_count_still_computes_polyo(self, tmp_path):
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB", "LIB"],
@@ -1042,7 +1042,7 @@ class TestEnrichmentOptionalRaw:
         out = tmp_path / "enrich.parquet"
         enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
         result = pl.read_parquet(out)
-        assert "polyo" not in result.columns
+        assert "polyo" in result.columns
         assert "z_score_lib" in result.columns
         assert "z_score_global" in result.columns
 
@@ -1102,12 +1102,12 @@ class TestDisynthonsOptionalRaw:
         lib.write_text(json.dumps({"L01": {"A": 2, "B": 1, "C": 2}}))
         return inp, lib
 
-    def test_no_raw_count_skips_polyo(self, tmp_path):
+    def test_no_raw_count_still_computes_polyo(self, tmp_path):
         inp, lib = self._write_input(tmp_path, include_raw=False)
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         df = pl.read_parquet(out / "disynthons_AB.parquet")
-        assert "polyo" not in df.columns
+        assert "polyo" in df.columns
         assert "z_score_lib" in df.columns
 
     def test_with_raw_count_includes_polyo(self, tmp_path):
