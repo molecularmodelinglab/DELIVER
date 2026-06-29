@@ -2,51 +2,55 @@
 
 Two conversion scripts for SGC-DEL libraries.
 
-## convert_decoding — Excel → DELi format
+## convert_decoding — TXT + Excel → DELi format
 
-Converts SGC library Excel files to DELi format:
+Converts SGC-DEL library files to DELi format:
 - `libraries/<lib_name>.json` — library barcode schema
 - `building_blocks/<lib_name>_BBA/BBB/BBC.csv` — building block tables
 
-No separate config file is needed — all barcode parameters are parsed from the Excel file itself.
+Building block data comes from TXT files; barcode schema (primers, overhangs, UMI) comes from matching Excel files.
 
 ```bash
 # Via SLURM (from DELIVER root):
 sbatch scripts/convert_hitgen_SGC/convert_decoding.slurm \
-  --input-dir  /path/to/sgc/excel_files \
+  --input-dir  /path/to/sgc/txt_files \
+  --excel-dir  /path/to/sgc/excel_files \
   --output-dir /path/to/deli_data
 ```
 
 The SLURM script creates a local `.venv` inside `scripts/convert_hitgen_SGC/` on first run.
 
-### Input format
+Libraries are matched by name: `similarity_NReagent_SGC-DEL0001.txt` pairs with `SGC-DEL0001 BB-Codon-List.xlsx`.
 
-One Excel file per library, named `LIBRARY-NAME BB-Codon-List.xlsx`.
+### TXT input (building block data)
 
-#### Main sheet (`LIBRARY-NAME`)
+One tab-separated `.txt` file per library containing all 3 cycles. Required columns:
+
+| Column | Content |
+|--------|---------|
+| `hits_index` | Building block ID (integer) |
+| `0` | Cycle number (1, 2, or 3) |
+| (column 2) | SMILES — skipped |
+| (column 3, name = library tag) | BB DNA tag |
+
+### Excel input (barcode schema)
+
+One `.xlsx` file per library, named `LIBRARY-NAME BB-Codon-List.xlsx`.
+
+Main sheet (`LIBRARY-NAME`):
 
 | Cell | Content |
 |------|---------|
-| B16 or B14 | `SOMETHING1NNNNNNNNNNNNSOMETHING2` — `SOMETHING1` is the library tag. Row 16 used if A16 contains `"Library  ID sequencing"`, otherwise row 14. |
-| B20 or B18 | Space-separated barcode layout string (see below). Row detected by A column containing `"Library Tag"`. |
+| B16 or B14 | Library tag sequence (`SOMETHING1NNNNN...SOMETHING2` — everything before the first N is the library tag). Row 16 used if A16 contains `"Library  ID sequencing"`, otherwise row 14. |
+| B20, B18, or B19 | Space-separated barcode layout starting with `(5')`. Row detected by A column containing `"Library Tag"`. |
 
-**Barcode layout** — must start with `(5')`, then space-separated parts:
+**Barcode layout** parts (space-separated after `(5')`):
 
 | Part | Description |
 |------|-------------|
-| `[0]` + `[1]` | Primer 1 tag (joined, no separator) |
-| `[2]` | BB1: `XXXXXOVERHANG` — X count = tag length, rest = overhang |
-| `[3]` | BB2: same format |
-| `[4]` | BB3: same format |
-| `[5]` | Library tag + `NNN...` (UMI) + primer 2. Library tag written as X placeholders (count validated against library tag length) or real sequence (validated against library tag). |
-
-#### Cycle sheets
-
-- `Cycle 1 BB & DNA tags`
-- `Cycle 2 BB & DNA tags`
-- `Cycle 3 BB & DNA tags`
-
-Each sheet must have columns `Index` (→ `id`) and `Positive-strand Sequence` (→ `tag`).
+| `[0]` + `[1]` | Primer 1 tag (joined) |
+| `[2]–[4]` | BB1–BB3: `XXXXXOVERHANG` — X count = tag length, rest = overhang |
+| `[5]` | Library tag + `NNN...` (UMI) + primer 2 |
 
 ---
 
