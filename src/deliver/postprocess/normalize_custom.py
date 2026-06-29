@@ -113,6 +113,10 @@ def main(args=None):
     if parsed.smiles_col and parsed.smiles_col != _SMILES:
         df = df.rename({parsed.smiles_col: _SMILES})
 
+    cycle_cols = [c for c in df.columns if len(c) == 1 and c.isupper()]
+    optional = [c for c in [RAW_READS, Z_SCORE, "SMILES"] if c in df.columns]
+    df = df.select([COMPOUND_ID, LIBRARY_ID] + cycle_cols + [CORRECTED_COUNT] + optional)
+
     validate_common_format(df)
     df.write_parquet(Path(parsed.output))
 
