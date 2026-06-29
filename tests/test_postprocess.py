@@ -1459,6 +1459,32 @@ class TestLabel:
         result = label_df(df, ["count"])
         assert not result.filter(pl.col("compound_id") == "cpd3")["label_count"][0]
 
+    # --- label_count_zscore (pre-supplied z_score) ---
+
+    def test_count_zscore_positive(self):
+        df = pl.DataFrame({
+            "compound_id": ["cpd1", "cpd2"],
+            "corrected_count": [10, 10],
+            "z_score": [2.0, 0.5],
+        })
+        result = label_df(df, ["count_zscore"])
+        assert result.filter(pl.col("compound_id") == "cpd1")["label_count_zscore"][0]
+        assert not result.filter(pl.col("compound_id") == "cpd2")["label_count_zscore"][0]
+
+    def test_count_zscore_requires_count(self):
+        df = pl.DataFrame({
+            "compound_id": ["cpd1"],
+            "corrected_count": [3],
+            "z_score": [2.0],
+        })
+        result = label_df(df, ["count_zscore"])
+        assert not result["label_count_zscore"][0]
+
+    def test_count_zscore_missing_column_raises(self):
+        df = pl.DataFrame({"compound_id": ["cpd1"], "corrected_count": [10]})
+        with pytest.raises(ValueError, match="z_score"):
+            label_df(df, ["count_zscore"])
+
     # --- label_count_zscore_lib ---
 
     def test_zscore_lib_requires_count(self):
@@ -1549,7 +1575,7 @@ class TestLabel:
             label_cli(["--input", str(inp), "--modes", "count_polyo", "--output", str(out)])
 
     def test_all_modes_available(self):
-        assert set(LABEL_MODES) == {"count", "count_zscore_lib", "count_zscore_global", "count_polyo"}
+        assert set(LABEL_MODES) == {"count", "count_zscore", "count_zscore_lib", "count_zscore_global", "count_polyo"}
 
     # --- CLI ---
 
