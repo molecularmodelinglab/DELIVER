@@ -18,11 +18,6 @@ def validate_common_format(df: pl.DataFrame) -> None:
         print(f"Error: missing required columns: {missing}", file=sys.stderr)
         sys.exit(1)
 
-    dupes = df.filter(pl.col(COMPOUND_ID).is_duplicated())
-    if len(dupes) > 0:
-        print(f"Error: compound_id is not unique ({len(dupes)} duplicate rows)", file=sys.stderr)
-        sys.exit(1)
-
 
 def load_inputs(input_path: Path, library_dict_path: Path) -> tuple[pl.DataFrame, dict]:
     """Load and validate input parquet + library dict. Exits on error."""

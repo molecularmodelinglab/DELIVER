@@ -173,15 +173,15 @@ class TestValidateCommonFormat:
         with pytest.raises(SystemExit):
             validate_common_format(df)
 
-    def test_duplicate_compound_id_fails(self):
+    def test_duplicate_compound_id_passes(self):
+        # duplicates are allowed after normalization — deduplicate.py handles them
         df = pl.DataFrame({
             "compound_id":      ["L01-1-2-3", "L01-1-2-3"],
             "library_id":       ["L01", "L01"],
             "raw_reads":        [5, 5],
             "corrected_count":  [4, 4],
         })
-        with pytest.raises(SystemExit):
-            validate_common_format(df)
+        validate_common_format(df)  # should not raise
 
 
 class TestBuildLibraryDict:
