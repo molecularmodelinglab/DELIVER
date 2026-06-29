@@ -4,7 +4,7 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 
 **We are using the "patch" branch of DELi as of now:** https://github.com/Popov-Lab-UNC/DELi/tree/patch
 
-For a detailed technical walkthrough of every pipeline step, see [docs/details.md](docs/details.md).
+For a detailed technical walkthrough of every pipeline step, see [docs/details.md](docs/details.md). For common Longleaf failure modes and how to recover, see [docs/troubleshoot.md](docs/troubleshoot.md).
 
 ## Quick start — Longleaf HPC
 
