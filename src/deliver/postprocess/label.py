@@ -6,7 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.lib.columns import CORRECTED_COUNT, POLYO, Z_SCORE_GLOBAL, Z_SCORE_LIB
+from deliver.postprocess.lib.columns import CORRECTED_COUNT, POLYO, Z_SCORE, Z_SCORE_GLOBAL, Z_SCORE_LIB
 from deliver.postprocess.join import smiles_duplicates
 
 _COUNT_THRESHOLD          = 5
@@ -25,6 +25,13 @@ def _any_disynthon(df: pl.DataFrame, col_suffix: str, threshold: float) -> pl.Ex
 
 def label_count(df: pl.DataFrame) -> pl.Expr:
     return pl.col(CORRECTED_COUNT) > _COUNT_THRESHOLD
+
+
+def label_count_zscore(df: pl.DataFrame) -> pl.Expr:
+    return (
+        (pl.col(CORRECTED_COUNT) > _COUNT_THRESHOLD)
+        & (pl.col(Z_SCORE) > _ZSCORE_THRESHOLD)
+    )
 
 
 def label_count_zscore_lib(df: pl.DataFrame) -> pl.Expr:
@@ -50,6 +57,7 @@ def label_count_polyo(df: pl.DataFrame) -> pl.Expr:
 
 MODES: dict[str, callable] = {
     "count":               label_count,
+    "count_zscore":        label_count_zscore,
     "count_zscore_lib":    label_count_zscore_lib,
     "count_zscore_global": label_count_zscore_global,
     "count_polyo":         label_count_polyo,
@@ -57,6 +65,7 @@ MODES: dict[str, callable] = {
 
 _MODE_REQUIRED_COLS: dict[str, list[str]] = {
     "count":               [CORRECTED_COUNT],
+    "count_zscore":        [CORRECTED_COUNT, Z_SCORE],
     "count_zscore_lib":    [CORRECTED_COUNT, Z_SCORE_LIB],
     "count_zscore_global": [CORRECTED_COUNT, Z_SCORE_GLOBAL],
     "count_polyo":         [CORRECTED_COUNT, POLYO],

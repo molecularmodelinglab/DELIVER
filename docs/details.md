@@ -306,8 +306,9 @@ Adds one `label_<mode>` boolean column per mode. Available modes:
 | Mode | Positive criterion |
 |------|--------------------|
 | `count` | `corrected_count > 5` |
-| `count_zscore_lib` | `corrected_count > 5` AND (`z_score_lib > 1` OR any disynthon `z_score_lib > 1`) |
-| `count_zscore_global` | `corrected_count > 5` AND (`z_score_global > 1` OR any disynthon `z_score_global > 1`) |
+| `count_zscore` | `corrected_count > 5` AND `z_score > 1` (pre-supplied z-score only) |
+| `count_zscore_lib` | `corrected_count > 5` AND (`z_score_lib_normalized > 1` OR any disynthon `z_score_lib_normalized > 1`) |
+| `count_zscore_global` | `corrected_count > 5` AND (`z_score_global_normalized > 1` OR any disynthon `z_score_global_normalized > 1`) |
 | `count_polyo` | `corrected_count > 5` AND (`polyo > 4` OR any disynthon `polyo > 4`) |
 
 Each mode validates that its required columns are present and fails with a clear

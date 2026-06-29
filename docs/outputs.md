@@ -64,6 +64,7 @@ was enabled in `params.labeling`.
 | Column                   | Type | Positive when |
 |--------------------------|------|---------------|
 | `label_count`            | Bool | `corrected_count > 5` |
+| `label_count_zscore`     | Bool | `corrected_count > 5` AND `z_score > 1` (pre-supplied z-score) |
 | `label_count_zscore_lib` | Bool | `corrected_count > 5` AND (`z_score_lib_normalized > 1` OR any `*_z_score_lib_normalized > 1`) |
 | `label_count_zscore_global` | Bool | `corrected_count > 5` AND (`z_score_global_normalized > 1` OR any `*_z_score_global_normalized > 1`) |
 | `label_count_polyo`      | Bool | `corrected_count > 5` AND (`polyo > 4` OR any `*_polyo > 4`) |

@@ -370,6 +370,7 @@ Adds one `label_<mode>` boolean column per mode to `enriched.parquet` and writes
 ```yaml
 labeling:
   - count               # corrected_count > 5
+  - count_zscore        # corrected_count > 5 AND z_score > 1 (pre-supplied z-score only)
   - count_zscore_lib    # corrected_count > 5 AND (z_score_lib_normalized > 1 OR any disynthon z_score_lib_normalized > 1)    [3]
   - count_zscore_global # corrected_count > 5 AND (z_score_global_normalized > 1 OR any disynthon z_score_global_normalized > 1) [3]
   - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)                [4]
