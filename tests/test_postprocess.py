@@ -490,6 +490,19 @@ class TestDeduplicate:
         df = pl.read_parquet(out)
         assert df.columns == ["compound_id", "library_id", "corrected_count"]
 
+    def test_sum_mode_combines_z_score_with_stouffer(self, tmp_path):
+        import math
+        df = pl.DataFrame({
+            "compound_id": ["L01-1-2", "L01-1-2", "L01-1-3"],
+            "library_id":  ["L01",     "L01",      "L01"],
+            "corrected_count": [10, 5, 8],
+            "z_score":         [2.0, 4.0, 1.0],
+        })
+        result = deduplicate_df(df, "sum").sort("compound_id")
+        merged = result.filter(pl.col("compound_id") == "L01-1-2")
+        assert abs(merged["z_score"][0] - (2.0 + 4.0) / math.sqrt(2)) < 1e-9
+        assert result.filter(pl.col("compound_id") == "L01-1-3")["z_score"][0] == pytest.approx(1.0)
+
     def test_smiles_conflict_raises_regardless_of_mode(self, tmp_path):
         df = pl.DataFrame({
             "compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"],
