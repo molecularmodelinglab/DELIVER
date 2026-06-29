@@ -193,7 +193,7 @@ Converts the raw counts parquet into a standard internal schema:
 | `library_id`    | Library identifier                       |
 | `A`, `B`, `C`   | Individual building block IDs per cycle  |
 | `corrected_count` | UMI-corrected count (primary metric)  |
-| `raw_count`     | Raw read count (optional)                |
+| `raw_reads`     | Raw read count (optional)                |
 | `z_score`       | Pre-supplied z-score (optional, carried through) |
 | `SMILES`        | SMILES string (optional, carried through) |
 
@@ -234,7 +234,7 @@ Removes or merges duplicate `compound_id` rows.
 | Mode | Behaviour |
 |------|-----------|
 | `fail` (default) | Aborts with an error listing duplicate IDs |
-| `sum` | Merges duplicates by summing `corrected_count` and `raw_count` |
+| `sum` | Merges duplicates by summing `corrected_count` and `raw_reads` |
 
 If a `SMILES` column is present, all duplicate rows for the same `compound_id` must
 share the same SMILES — fails loudly otherwise, regardless of mode.
@@ -250,16 +250,16 @@ disynthons.py  --input deduplicated.parquet --library-dict library_dict.json --o
 
 **`singleton.py`** computes per-compound enrichment metrics:
 
-| Output column   | Description |
-|-----------------|-------------|
-| `z_score_lib`   | Binomial z-score relative to library compound space |
-| `z_score_global` | Binomial z-score relative to all libraries combined |
-| `polyo`         | PolyO score — Poisson-based enrichment metric |
+| Output column              | Description |
+|----------------------------|-------------|
+| `z_score_lib_normalized`   | Binomial z-score relative to library compound space |
+| `z_score_global_normalized`| Binomial z-score relative to all libraries combined |
+| `polyo`                    | PolyO score — Poisson-based enrichment metric |
 
 **`disynthons.py`** aggregates to disynthon level (all pairs of cycles: AB, BC, AC, …)
 and computes the same three metrics at the disynthon level. One file per cycle pair:
 `disynthon_AB.parquet`, `disynthon_BC.parquet`, `disynthon_AC.parquet`, etc.
-Each row also has `tot_compounds`, `mean_count`, and `std_count` (statistics over the
+Each row also has `line_size`, `line_strength`, and `line_strength_std` (statistics over the
 third cycle's building blocks within that disynthon).
 
 Both PolyO and z-scores use `corrected_count` (UMI-corrected) throughout.
@@ -279,9 +279,9 @@ pair. Disynthon columns are prefixed with the pair name in lowercase:
 
 | Singleton columns (unchanged)        | Added disynthon columns (example for AB) |
 |--------------------------------------|------------------------------------------|
-| `compound_id`, `library_id`, `A`, `B`, `C` | `ab_corrected_count`            |
-| `corrected_count`, `raw_count`       | `ab_tot_compounds`, `ab_mean_count`, `ab_std_count` |
-| `z_score_lib`, `z_score_global`      | `ab_z_score_lib`, `ab_z_score_global`   |
+| `compound_id`, `library_id`, `A`, `B`, `C` | `ab_corrected_count_sum`       |
+| `corrected_count`, `raw_reads`       | `ab_line_size`, `ab_line_strength`, `ab_line_strength_std` |
+| `z_score_lib_normalized`, `z_score_global_normalized` | `ab_z_score_lib_normalized`, `ab_z_score_global_normalized` |
 | `polyo`                              | `ab_polyo`                               |
 | `SMILES` (if present)               | _(same for `bc_*`, `ac_*`, …)_           |
 

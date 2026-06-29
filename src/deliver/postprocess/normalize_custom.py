@@ -12,7 +12,7 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT, Z_SCORE
+from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_READS, Z_SCORE
 from deliver.postprocess.lib.common import validate_common_format
 
 _SMILES = "SMILES"
@@ -107,7 +107,7 @@ def main(args=None):
 
     df = df.rename({parsed.corrected_count_col: CORRECTED_COUNT})
     if parsed.raw_count_col:
-        df = df.rename({parsed.raw_count_col: RAW_COUNT})
+        df = df.rename({parsed.raw_count_col: RAW_READS})
     if parsed.z_score_col:
         df = df.rename({parsed.z_score_col: Z_SCORE})
     if parsed.smiles_col and parsed.smiles_col != _SMILES:
