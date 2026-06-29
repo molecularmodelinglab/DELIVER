@@ -6,7 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, RAW_READS
+from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, RAW_READS, Z_SCORE
 
 _SMILES = "SMILES"
 
@@ -39,10 +39,13 @@ def deduplicate(df: pl.DataFrame, on_duplicate_compound_id: str) -> pl.DataFrame
         )
 
     # sum mode: merge duplicate rows by summing counts, keeping first value for all other columns
-    sum_cols   = [c for c in [CORRECTED_COUNT, RAW_READS] if c in df.columns]
-    first_cols = [c for c in df.columns if c != COMPOUND_ID and c not in sum_cols]
+    sum_cols     = [c for c in [CORRECTED_COUNT, RAW_READS] if c in df.columns]
+    has_z        = Z_SCORE in df.columns
+    first_cols   = [c for c in df.columns if c != COMPOUND_ID and c not in sum_cols and c != Z_SCORE]
+    stouffer_agg = [(pl.col(Z_SCORE).sum() / pl.col(Z_SCORE).count().sqrt()).alias(Z_SCORE)] if has_z else []
     result = df.group_by(COMPOUND_ID).agg(
         [pl.col(c).sum()   for c in sum_cols] +
+        stouffer_agg +
         [pl.col(c).first() for c in first_cols]
     )
     return result.select(df.columns)  # restore original column order

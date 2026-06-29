@@ -234,7 +234,7 @@ Removes or merges duplicate `compound_id` rows.
 | Mode | Behaviour |
 |------|-----------|
 | `fail` (default) | Aborts with an error listing duplicate IDs |
-| `sum` | Merges duplicates by summing `corrected_count` and `raw_reads` |
+| `sum` | Merges duplicates by summing `corrected_count` and `raw_reads`; if a pre-supplied `z_score` is present, combines it via Stouffer's method (`sum(z) / sqrt(n)`) — a pragmatic approximation, since the correct approach would be to recompute the z-score from the pooled count |
 
 If a `SMILES` column is present, all duplicate rows for the same `compound_id` must
 share the same SMILES — fails loudly otherwise, regardless of mode.
