@@ -225,7 +225,7 @@ DELIVER/
 │           ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
 │           ├── merge_smiles.py       # merge per-library SMILES parquets into one
 │           ├── deduplicate.py        # deduplication + aggregation
-│           ├── singleton.py          # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
+│           ├── singleton.py          # per-compound enrichment scores (z_score_lib_normalized, z_score_global_normalized, polyo)
 │           ├── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
 │           ├── join.py               # join singletons + disynthons into enriched.parquet (wide table)
 │           └── label.py              # add label_* boolean columns per labeling mode
@@ -272,7 +272,7 @@ Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, w
 | Normalize external counts with user-specified column mapping | implemented |
 | SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
 | Deduplication + aggregation | implemented |
-| Per-compound enrichment scores (z_score_lib, z_score_global[3], polyo[4]) — singletons.parquet | implemented |
+| Per-compound enrichment scores (z_score_lib_normalized, z_score_global_normalized[3], polyo[4]) — singletons.parquet | implemented |
 | Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
 | Join singletons + disynthons into enriched.parquet (wide table) | implemented |
 | Label compounds with boolean label_* columns (count, z-score, polyo modes) — labeled.parquet | implemented |
@@ -370,12 +370,12 @@ Adds one `label_<mode>` boolean column per mode to `enriched.parquet` and writes
 ```yaml
 labeling:
   - count               # corrected_count > 5
-  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)    [3]
-  - count_zscore_global # corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1) [3]
+  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib_normalized > 1 OR any disynthon z_score_lib_normalized > 1)    [3]
+  - count_zscore_global # corrected_count > 5 AND (z_score_global_normalized > 1 OR any disynthon z_score_global_normalized > 1) [3]
   - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)                [4]
 ```
 
-Each mode validates that its required columns are present and fails with a clear error if they are not. `z_score_lib`/`z_score_global` modes require singleton enrichment to have been computed (not applicable if a pre-supplied `z_score` was used without running `singleton.py`).
+Each mode validates that its required columns are present and fails with a clear error if they are not. `z_score_lib_normalized`/`z_score_global_normalized` modes require singleton enrichment to have been computed (not applicable if a pre-supplied `z_score` was used without running `singleton.py`).
 
 If a `SMILES` column is present and any SMILES appear more than once, duplicate rows are also written to `labeled_duplicates.parquet` sorted by SMILES.
 

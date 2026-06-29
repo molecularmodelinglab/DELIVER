@@ -8,8 +8,8 @@ from pathlib import Path
 import polars as pl
 
 from deliver.postprocess.lib.columns import (
-    CORRECTED_COUNT, LIBRARY_ID, MEAN_COUNT, POLYO, RAW_COUNT, STD_COUNT, TOT_COMPOUNDS,
-    Z_SCORE_GLOBAL, Z_SCORE_LIB,
+    CORRECTED_COUNT, CORRECTED_COUNT_SUM, LIBRARY_ID, LINE_SIZE, LINE_STRENGTH, LINE_STRENGTH_STD,
+    POLYO, RAW_READS, RAW_READS_SUM, Z_SCORE_GLOBAL, Z_SCORE_LIB,
 )
 from deliver.postprocess.lib.common import load_inputs
 from deliver.postprocess.lib.metrics import PolyO, z_score
@@ -35,7 +35,7 @@ def _aggregate(df: pl.DataFrame, col1: str, col2: str, has_raw: bool) -> pl.Data
         pl.col(_POLYO_RAW).sum(),
     ]
     if has_raw:
-        aggs.append(pl.col(RAW_COUNT).sum())
+        aggs.append(pl.col(RAW_READS).sum())
     return (
         df
         .filter(pl.col(col1).is_not_null() & pl.col(col2).is_not_null())
@@ -48,17 +48,17 @@ def _aggregate(df: pl.DataFrame, col1: str, col2: str, has_raw: bool) -> pl.Data
 def _add_lib_statistics(
     df_lib: pl.DataFrame, lib: dict, col1: str, col2: str, polyo: PolyO,
 ) -> pl.DataFrame:
-    """Add tot_compounds, mean_count, std_count, z_score_lib, and polyo for one library."""
+    """Add line_size, line_strength, line_strength_std, z_score_lib_normalized, and polyo for one library."""
     tot_compounds = math.prod(count for k, count in lib.items() if k not in {col1, col2})  # compounds per disynthon (remaining cycles' product)
     n_disynthons = lib[col1] * lib[col2]  # number of possible disynthons in the library
     df = (
         df_lib
         .with_columns(
-            pl.lit(tot_compounds).alias(TOT_COMPOUNDS),
-            (pl.col(CORRECTED_COUNT) / tot_compounds).alias(MEAN_COUNT),
+            pl.lit(tot_compounds).alias(LINE_SIZE),
+            (pl.col(CORRECTED_COUNT) / tot_compounds).alias(LINE_STRENGTH),
         )
         .with_columns(
-            ((pl.col("_sum_sq") / tot_compounds - pl.col(MEAN_COUNT) ** 2).sqrt()).alias(STD_COUNT),
+            ((pl.col("_sum_sq") / tot_compounds - pl.col(LINE_STRENGTH) ** 2).sqrt()).alias(LINE_STRENGTH_STD),
         )
         .drop("_sum_sq")
     )
@@ -70,7 +70,7 @@ def _add_lib_statistics(
 
 def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
     """Aggregate to disynthon level and compute statistics per library, then add global z-score."""
-    has_raw = RAW_COUNT in df.columns
+    has_raw = RAW_READS in df.columns
     n_possible_total = sum(math.prod(lib.values()) for lib in library_dict.values())
     d = df[CORRECTED_COUNT].sum() / n_possible_total
 
@@ -96,9 +96,13 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
         for lib in library_dict.values()
         if col1 in lib and col2 in lib
     )
-    return df_result.with_columns(
+    df_result = df_result.with_columns(
         z_score(df_result[CORRECTED_COUNT], n_total_disynthons).alias(Z_SCORE_GLOBAL)
     )
+    rename = {CORRECTED_COUNT: CORRECTED_COUNT_SUM}
+    if RAW_READS in df_result.columns:
+        rename[RAW_READS] = RAW_READS_SUM
+    return df_result.rename(rename)
 
 
 def main(args=None):

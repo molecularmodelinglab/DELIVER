@@ -87,7 +87,7 @@ class TestNormalize:
         out = tmp_path / "normalized.parquet"
         normalize(["--input", str(deli_counts_parquet), "--output", str(out)])
         df = pl.read_parquet(out)
-        assert set(df.columns) == {"compound_id", "library_id", "A", "B", "C", "raw_count", "corrected_count"}
+        assert set(df.columns) == {"compound_id", "library_id", "A", "B", "C", "raw_reads", "corrected_count"}
 
     def test_compound_id_format(self, deli_counts_parquet, tmp_path):
         out = tmp_path / "normalized.parquet"
@@ -160,7 +160,7 @@ class TestValidateCommonFormat:
         df = pl.DataFrame({
             "compound_id":      ["L01-1-2-3", "L01-1-2-4"],
             "library_id":       ["L01", "L01"],
-            "raw_count":        [5, 3],
+            "raw_reads":        [5, 3],
             "corrected_count":  [4, 3],
         })
         validate_common_format(df)  # should not raise
@@ -177,7 +177,7 @@ class TestValidateCommonFormat:
         df = pl.DataFrame({
             "compound_id":      ["L01-1-2-3", "L01-1-2-3"],
             "library_id":       ["L01", "L01"],
-            "raw_count":        [5, 5],
+            "raw_reads":        [5, 5],
             "corrected_count":  [4, 4],
         })
         with pytest.raises(SystemExit):
@@ -234,7 +234,7 @@ class TestAddSmiles:
             "library_id":      ["L01", "L01", "L02"],
             "A":               ["1", "2", "1"],
             "B":               ["1", "1", "1"],
-            "raw_count":       [3, 1, 2],
+            "raw_reads":       [3, 1, 2],
             "corrected_count": [3, 1, 2],
         })
         inp = tmp_path / "norm.parquet"
@@ -335,7 +335,7 @@ class TestMergeSmiles:
         df = pl.DataFrame({
             "compound_id":     ["L01-1-1", "L01-2-1", "L02-1-1"],
             "library_id":      ["L01",     "L01",     "L02"],
-            "raw_count":       [3,         1,         2],
+            "raw_reads":       [3,         1,         2],
             "corrected_count": [3,         1,         2],
         })
         p = tmp_path / "normalized.parquet"
@@ -352,7 +352,7 @@ class TestMergeSmiles:
         orig = self._write_orig(tmp_path)
         partial = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
-            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
@@ -362,7 +362,7 @@ class TestMergeSmiles:
         orig = self._write_orig(tmp_path)
         partial = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
-            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
@@ -374,7 +374,7 @@ class TestMergeSmiles:
         orig = self._write_orig(tmp_path)
         partial = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
-            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
@@ -385,11 +385,11 @@ class TestMergeSmiles:
         orig = self._write_orig(tmp_path)
         p1 = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
-            "raw_count": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
         })
         p2 = self._write_partial(tmp_path, "L02", {
             "compound_id": ["L02-1-1"], "library_id": ["L02"],
-            "raw_count": [2], "corrected_count": [2], "SMILES": ["c1ccccc1"],
+            "raw_reads": [2], "corrected_count": [2], "SMILES": ["c1ccccc1"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(p1), str(p2), "--output", str(out)])
@@ -400,14 +400,14 @@ class TestMergeSmiles:
         df_orig = pl.DataFrame({
             "compound_id": ["L01-1-1", "L02-1-1", "L03-1-1"],
             "library_id":  ["L01",     "L02",     "L03"],
-            "raw_count":   [1,         2,         3],
+            "raw_reads":   [1,         2,         3],
             "corrected_count": [1,     2,         3],
         })
         orig = tmp_path / "norm.parquet"
         df_orig.write_parquet(orig)
         partial = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1"], "library_id": ["L01"],
-            "raw_count": [1], "corrected_count": [1], "SMILES": ["CCO"],
+            "raw_reads": [1], "corrected_count": [1], "SMILES": ["CCO"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
@@ -420,7 +420,7 @@ class TestMergeSmiles:
         orig = self._write_orig(tmp_path)
         partial = self._write_partial(tmp_path, "L01", {
             "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
-            "raw_count": [3, 1], "corrected_count": [3, 1], "smi": ["CCO", "CCC"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "smi": ["CCO", "CCC"],
         })
         out = tmp_path / "merged.parquet"
         merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
@@ -470,14 +470,14 @@ class TestDeduplicate:
             "compound_id": ["L01-1-2", "L01-1-2", "L01-1-3"],
             "library_id":  ["L01",     "L01",      "L01"],
             "corrected_count": [10, 5, 8],
-            "raw_count":       [12, 6, 9],
+            "raw_reads":       [12, 6, 9],
         })
         out = tmp_path / "out.parquet"
         deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "sum"])
         df = pl.read_parquet(out).sort("compound_id")
         assert len(df) == 2
         assert df.filter(pl.col("compound_id") == "L01-1-2")["corrected_count"][0] == 15
-        assert df.filter(pl.col("compound_id") == "L01-1-2")["raw_count"][0] == 18
+        assert df.filter(pl.col("compound_id") == "L01-1-2")["raw_reads"][0] == 18
 
     def test_sum_mode_preserves_column_order(self, tmp_path):
         inp = self._write(tmp_path, {
@@ -503,7 +503,7 @@ class TestDeduplicate:
             "compound_id": ["L01-1-2", "L01-1-2"],
             "library_id":  ["L01", "L01"],
             "corrected_count": [10, 5],
-            "SMILES": ["CCO", "CCO"],  # same SMILES — ok
+            "SMILES": ["CCO", "CCO"],
         })
         out = tmp_path / "out.parquet"
         deduplicate(["--input", inp, "--output", str(out), "--on-duplicate-compound-id", "sum"])
@@ -532,7 +532,7 @@ def normalized_parquet(tmp_path):
         "A":                ["1",         "1",          "1"],
         "B":                ["2",         "2",          "2"],
         "C":                ["3",         "4",          "3"],
-        "raw_count":        [10,          5,            8],
+        "raw_reads":        [10,          5,            8],
         "corrected_count":  [10,          5,            8],
     })
     path = tmp_path / "normalized.parquet"
@@ -562,8 +562,8 @@ class TestEnrichment:
         out = tmp_path / "singletons.parquet"
         enrichment(["--input", str(normalized_parquet), "--library-dict", str(library_dict_json), "--output", str(out)])
         df = pl.read_parquet(out)
-        assert "z_score_lib" in df.columns
-        assert "z_score_global" in df.columns
+        assert "z_score_lib_normalized" in df.columns
+        assert "z_score_global_normalized" in df.columns
 
     def test_output_has_polyo(self, normalized_parquet, library_dict_json, tmp_path):
         out = tmp_path / "singletons.parquet"
@@ -577,7 +577,7 @@ class TestEnrichment:
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB", "LIB"],
-            "raw_count":       [50, 1],
+            "raw_reads":       [50, 1],
             "corrected_count": [50, 1],
         })
         inp = tmp_path / "norm.parquet"
@@ -590,12 +590,12 @@ class TestEnrichment:
         assert result["polyo"][0] > result["polyo"][1]
 
     def test_polyo_values(self, tmp_path):
-        # Library: {"A": 4}, raw_count [10, 2], total=12.
+        # Library: {"A": 4}, raw_reads [10, 2], total=12.
         # d = 12/4 = 3.0; c_cpd=4, c_read=8.
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB",   "LIB"],
-            "raw_count":       [10, 2],
+            "raw_reads":       [10, 2],
             "corrected_count": [10, 2],
         })
         inp = tmp_path / "norm.parquet"
@@ -612,11 +612,11 @@ class TestEnrichment:
     def test_polyo_uses_corrected_count(self, tmp_path):
         # Both d and per-compound score use corrected_count throughout.
         # d = (8+2)/4 = 2.5 (from corrected); PMF uses corrected [8, 2].
-        # If raw [10,4] were used for d instead: polyo would differ.
+        # If raw_reads [10,4] were used for d instead: polyo would differ.
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB",   "LIB"],
-            "raw_count":       [10, 4],
+            "raw_reads":       [10, 4],
             "corrected_count": [8,  2],
         })
         inp = tmp_path / "norm.parquet"
@@ -648,7 +648,7 @@ class TestEnrichment:
         df = pl.DataFrame({
             "compound_id":     ["LIB-1-2-3", "LIB-3-2-1"],
             "library_id":      ["LIB",   "LIB"],
-            "raw_count":       [15, 2],
+            "raw_reads":       [15, 2],
             "corrected_count": [9, 1],
         })
         inp = tmp_path / "norm.parquet"
@@ -658,7 +658,7 @@ class TestEnrichment:
         out = tmp_path / "enrich.parquet"
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out).sort("compound_id")
-        z = result["z_score_lib"].to_list()
+        z = result["z_score_lib_normalized"].to_list()
         assert z[0] == pytest.approx(284.6032)
         assert z[1] == pytest.approx(31.619772)
 
@@ -669,7 +669,7 @@ class TestEnrichment:
         df = pl.DataFrame({
             "compound_id":     ["L01-1", "L01-2", "L02-1", "L02-2"],
             "library_id":      ["L01",   "L01",   "L02",   "L02"],
-            "raw_count":       [5, 5, 100, 100],
+            "raw_reads":       [5, 5, 100, 100],
             "corrected_count": [5, 5, 100, 100],
         })
         inp = tmp_path / "norm.parquet"
@@ -679,10 +679,10 @@ class TestEnrichment:
         out = tmp_path / "enrich.parquet"
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out)
-        assert result["z_score_lib"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
+        assert result["z_score_lib_normalized"].to_list() == pytest.approx([0.0, 0.0, 0.0, 0.0])
         # global z-score uses both libraries together, so L01 (count=5) and L02 (count=100)
         # are compared against a shared expected value — result is non-zero
-        assert any(z != pytest.approx(0.0) for z in result["z_score_global"].to_list())
+        assert any(z != pytest.approx(0.0) for z in result["z_score_global_normalized"].to_list())
 
     def test_z_score_global_values(self, tmp_path):
         # L01: counts [10, 10] (equal → lib z=0), L02: counts [6, 2].
@@ -691,7 +691,7 @@ class TestEnrichment:
         df = pl.DataFrame({
             "compound_id":     ["L01-1", "L01-2", "L02-1", "L02-2"],
             "library_id":      ["L01",   "L01",   "L02",   "L02"],
-            "raw_count":       [10, 10, 6, 2],
+            "raw_reads":       [10, 10, 6, 2],
             "corrected_count": [10, 10, 6, 2],
         })
         inp = tmp_path / "norm.parquet"
@@ -702,7 +702,7 @@ class TestEnrichment:
         enrichment(["--input", str(inp), "--library-dict", str(lib_dict), "--output", str(out)])
         result = pl.read_parquet(out).sort("compound_id")
         dn = 7 * math.sqrt(3)
-        assert result["z_score_global"].to_list() == pytest.approx([3/dn, 3/dn, -1/dn, -5/dn])
+        assert result["z_score_global_normalized"].to_list() == pytest.approx([3/dn, 3/dn, -1/dn, -5/dn])
 
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
@@ -719,7 +719,7 @@ class TestDisynthons:
                 "A":               ["1", "1", "2", "2"],
                 "B":               ["1", "1", "1", "1"],
                 "C":               ["1", "2", "1", "2"],
-                "raw_count":       corrected_counts,
+                "raw_reads":       corrected_counts,
                 "corrected_count": corrected_counts,
             })
             lib_dict = {"L01": {"A": 2, "B": 1, "C": 2}}
@@ -729,7 +729,7 @@ class TestDisynthons:
                 "library_id":      ["L01", "L01"],
                 "A":               ["1", "1"],
                 "B":               ["1", "2"],
-                "raw_count":       corrected_counts,
+                "raw_reads":       corrected_counts,
                 "corrected_count": corrected_counts,
             })
             lib_dict = {"L01": {"A": 1, "B": 2}}
@@ -766,7 +766,7 @@ class TestDisynthons:
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
-        assert df["corrected_count"].to_list() == [6, 2]
+        assert df["corrected_count_sum"].to_list() == [6, 2]
 
     def test_ab_statistics(self, tmp_path):
         # library: A=2, B=1, C=2 → tot_compounds per AB = C = 2
@@ -778,10 +778,10 @@ class TestDisynthons:
         out = tmp_path / "out"
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         df = pl.read_parquet(out / "disynthon_AB.parquet").sort(["A", "B"])
-        assert df["tot_compounds"].to_list() == [2, 2]
-        assert df["mean_count"].to_list() == pytest.approx([3.0, 1.0])
-        assert df["std_count"].to_list() == pytest.approx([1.0, 0.0])
-        assert df["z_score_lib"].to_list() == pytest.approx([0.5, -0.5])
+        assert df["line_size"].to_list() == [2, 2]
+        assert df["line_strength"].to_list() == pytest.approx([3.0, 1.0])
+        assert df["line_strength_std"].to_list() == pytest.approx([1.0, 0.0])
+        assert df["z_score_lib_normalized"].to_list() == pytest.approx([0.5, -0.5])
 
     def test_multi_library_not_mixed(self, tmp_path):
         # Two libraries both have A="1", B="1" — must stay separate.
@@ -793,7 +793,7 @@ class TestDisynthons:
             "A":               ["1",          "1",          "1"],
             "B":               ["1",          "1",          "1"],
             "C":               ["1",          "2",          None],
-            "raw_count":       [4, 2, 3],
+            "raw_reads":       [4, 2, 3],
             "corrected_count": [4, 2, 3],
         })
         inp = tmp_path / "norm.parquet"
@@ -805,17 +805,17 @@ class TestDisynthons:
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         ab = pl.read_parquet(out / "disynthon_AB.parquet").sort(["library_id", "A", "B"])
         assert ab["library_id"].to_list() == ["L01", "L02"]
-        assert ab["corrected_count"].to_list() == [6, 3]
-        assert ab["tot_compounds"].to_list() == [2, 1]
+        assert ab["corrected_count_sum"].to_list() == [6, 3]
+        assert ab["line_size"].to_list() == [2, 1]
         # L01: z-score well-defined; L02 has n_disynthons=1 → z-score undefined (NaN)
-        assert ab["z_score_lib"][0] == pytest.approx(1.0)
-        assert math.isnan(ab["z_score_lib"][1])
+        assert ab["z_score_lib_normalized"][0] == pytest.approx(1.0)
+        assert math.isnan(ab["z_score_lib_normalized"][1])
         # global z-score: n_disynthons_total=3, n_total=9, c_expected=3,
         #   denom_norm = sqrt(3*2/3) * sqrt(9) = sqrt(2)*3 = 3*sqrt(2).
         # L02 global z-score is 0 (not NaN) even though lib z-score is undefined.
         dn = 3 * math.sqrt(2)
-        assert ab["z_score_global"][0] == pytest.approx(3/dn)
-        assert ab["z_score_global"][1] == pytest.approx(0.0)
+        assert ab["z_score_global_normalized"][0] == pytest.approx(3/dn)
+        assert ab["z_score_global_normalized"][1] == pytest.approx(0.0)
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -844,7 +844,7 @@ class TestDisynthons:
         assert df["polyo"][0] > df["polyo"][1]
 
     def test_polyo_values(self, tmp_path):
-        # Library L01: A=2, B=1, C=2 → 4 compounds; raw_count [4,2,1,1], total=8.
+        # Library L01: A=2, B=1, C=2 → 4 compounds; raw_reads [4,2,1,1], total=8.
         # d = 8/4 = 2.0; _total_disynthons = A*B+A*C+B*C = 8; c_cpd=4, c_read=7.
         # A1-B1 raw = sum(-log10 P(4;2), -log10 P(2;2)); A2-B1 raw = 2*(-log10 P(1;2)).
         inp, lib = self._write_input(tmp_path, [4, 2, 1, 1])
@@ -858,14 +858,14 @@ class TestDisynthons:
     def test_polyo_uses_corrected_count(self, tmp_path):
         # Both d and per-compound score use corrected_count throughout.
         # d = (3+1+1+1)/4 = 1.5 (from corrected); PMF uses corrected [3,1] and [1,1].
-        # If raw [4,2,1,1] were used for d instead: polyo would differ.
+        # If raw_reads [4,2,1,1] were used for d instead: polyo would differ.
         df = pl.DataFrame({
             "compound_id":     ["L01-1-1-1", "L01-1-1-2", "L01-2-1-1", "L01-2-1-2"],
             "library_id":      ["L01"] * 4,
             "A":               ["1", "1", "2", "2"],
             "B":               ["1", "1", "1", "1"],
             "C":               ["1", "2", "1", "2"],
-            "raw_count":       [4, 2, 1, 1],
+            "raw_reads":       [4, 2, 1, 1],
             "corrected_count": [3, 1, 1, 1],
         })
         inp = tmp_path / "norm.parquet"
@@ -899,7 +899,7 @@ class TestDisynthonsComprehensive:
             "A":               ["1", "1", "1", "1", "2", "2", "2", "2"],
             "B":               ["1", "1", "2", "2", "1", "1", "2", "2"],
             "C":               ["1", "2", "1", "2", "1", "2", "1", "2"],
-            "raw_count":       [6, 2, 4, 4, 1, 1, 1, 1],
+            "raw_reads":       [6, 2, 4, 4, 1, 1, 1, 1],
             "corrected_count": [6, 2, 4, 4, 1, 1, 1, 1],
         })
         inp = tmp_path / "norm.parquet"
@@ -919,35 +919,35 @@ class TestDisynthonsComprehensive:
     def test_ab_counts(self, disynthon_tables):
         # A1-B1: 6+2=8, A1-B2: 4+4=8, A2-B1: 1+1=2, A2-B2: 1+1=2
         ab = disynthon_tables["AB"]
-        assert ab["corrected_count"].to_list() == [8, 8, 2, 2]
-        assert ab["tot_compounds"].to_list() == [2, 2, 2, 2]
-        assert ab["mean_count"].to_list() == pytest.approx([4.0, 4.0, 1.0, 1.0])
+        assert ab["corrected_count_sum"].to_list() == [8, 8, 2, 2]
+        assert ab["line_size"].to_list() == [2, 2, 2, 2]
+        assert ab["line_strength"].to_list() == pytest.approx([4.0, 4.0, 1.0, 1.0])
 
     def test_bc_counts(self, disynthon_tables):
         # B1-C1: 6+1=7, B1-C2: 2+1=3, B2-C1: 4+1=5, B2-C2: 4+1=5
         bc = disynthon_tables["BC"]
-        assert bc["corrected_count"].to_list() == [7, 3, 5, 5]
-        assert bc["tot_compounds"].to_list() == [2, 2, 2, 2]
+        assert bc["corrected_count_sum"].to_list() == [7, 3, 5, 5]
+        assert bc["line_size"].to_list() == [2, 2, 2, 2]
 
     def test_ac_counts(self, disynthon_tables):
         # A1-C1: 6+4=10, A1-C2: 2+4=6, A2-C1: 1+1=2, A2-C2: 1+1=2
         ac = disynthon_tables["AC"]
-        assert ac["corrected_count"].to_list() == [10, 6, 2, 2]
-        assert ac["tot_compounds"].to_list() == [2, 2, 2, 2]
+        assert ac["corrected_count_sum"].to_list() == [10, 6, 2, 2]
+        assert ac["line_size"].to_list() == [2, 2, 2, 2]
 
     def test_ab_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["AB"]["z_score_lib"].to_list()
+        z = disynthon_tables["AB"]["z_score_lib_normalized"].to_list()
         assert z == pytest.approx([3/dn, 3/dn, -3/dn, -3/dn])
 
     def test_bc_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["BC"]["z_score_lib"].to_list()
+        z = disynthon_tables["BC"]["z_score_lib_normalized"].to_list()
         assert z == pytest.approx([2/dn, -2/dn, 0.0, 0.0])
 
     def test_ac_z_scores(self, disynthon_tables):
         dn = disynthon_tables["denom_norm"]
-        z = disynthon_tables["AC"]["z_score_lib"].to_list()
+        z = disynthon_tables["AC"]["z_score_lib_normalized"].to_list()
         assert z == pytest.approx([5/dn, 1/dn, -3/dn, -3/dn])
 
 
@@ -1020,15 +1020,15 @@ class TestNormalizeCustom:
                           "--compound-col", "cpd", "--corrected-count-col", "count",
                           "--raw-count-col", "raw"])
         df = pl.read_parquet(out)
-        assert "raw_count" in df.columns
-        assert df["raw_count"].to_list() == [12, 6]
+        assert "raw_reads" in df.columns
+        assert df["raw_reads"].to_list() == [12, 6]
 
     def test_raw_count_absent_when_not_provided(self, tmp_path):
         inp = self._write(tmp_path, {"cpd": ["L01-1-2"], "count": [10]})
         out = tmp_path / "out.parquet"
         normalize_custom(["--input", inp, "--output", str(out),
                           "--compound-col", "cpd", "--corrected-count-col", "count"])
-        assert "raw_count" not in pl.read_parquet(out).columns
+        assert "raw_reads" not in pl.read_parquet(out).columns
 
     def test_z_score_col_renamed(self, tmp_path):
         inp = self._write(tmp_path, {"cpd": ["L01-1-2"], "count": [10], "zscore": [1.5]})
@@ -1112,15 +1112,15 @@ class TestEnrichmentOptionalRaw:
         enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
         result = pl.read_parquet(out)
         assert "polyo" in result.columns
-        assert "z_score_lib" in result.columns
-        assert "z_score_global" in result.columns
+        assert "z_score_lib_normalized" in result.columns
+        assert "z_score_global_normalized" in result.columns
 
     def test_presupplied_z_score_carried_through(self, tmp_path):
         df = pl.DataFrame({
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB", "LIB"],
             "corrected_count": [10, 2],
-            "raw_count":       [10, 2],
+            "raw_reads":       [10, 2],
             "z_score":         [1.5, -0.5],
         })
         inp = tmp_path / "norm.parquet"
@@ -1129,8 +1129,8 @@ class TestEnrichmentOptionalRaw:
         enrichment(["--input", str(inp), "--library-dict", self._lib_dict(tmp_path), "--output", str(out)])
         result = pl.read_parquet(out)
         assert "z_score" in result.columns
-        assert "z_score_lib" not in result.columns
-        assert "z_score_global" not in result.columns
+        assert "z_score_lib_normalized" not in result.columns
+        assert "z_score_global_normalized" not in result.columns
         assert result["z_score"].to_list() == pytest.approx([1.5, -0.5])
 
     def test_presupplied_z_score_still_calculates_polyo(self, tmp_path):
@@ -1138,7 +1138,7 @@ class TestEnrichmentOptionalRaw:
             "compound_id":     ["LIB-1", "LIB-2"],
             "library_id":      ["LIB", "LIB"],
             "corrected_count": [10, 2],
-            "raw_count":       [10, 2],
+            "raw_reads":       [10, 2],
             "z_score":         [1.5, -0.5],
         })
         inp = tmp_path / "norm.parquet"
@@ -1164,7 +1164,7 @@ class TestDisynthonsOptionalRaw:
             "corrected_count": [4, 2, 1, 1],
         }
         if include_raw:
-            data["raw_count"] = [4, 2, 1, 1]
+            data["raw_reads"] = [4, 2, 1, 1]
         inp = tmp_path / "norm.parquet"
         pl.DataFrame(data).write_parquet(inp)
         lib = tmp_path / "lib.json"
@@ -1177,7 +1177,7 @@ class TestDisynthonsOptionalRaw:
         disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
         df = pl.read_parquet(out / "disynthon_AB.parquet")
         assert "polyo" in df.columns
-        assert "z_score_lib" in df.columns
+        assert "z_score_lib_normalized" in df.columns
 
     def test_with_raw_count_includes_polyo(self, tmp_path):
         inp, lib = self._write_input(tmp_path, include_raw=True)
@@ -1192,29 +1192,29 @@ class TestJoin:
 
     def _singletons(self) -> pl.DataFrame:
         return pl.DataFrame({
-            "compound_id":      ["L01-A1-B1-C1", "L01-A1-B2-C1", "L01-A2-B1-C2"],
-            "library_id":       ["L01", "L01", "L01"],
-            "A":                ["A1", "A1", "A2"],
-            "B":                ["B1", "B2", "B1"],
-            "C":                ["C1", "C1", "C2"],
-            "corrected_count":  [10, 5, 1],
-            "z_score_lib":      [2.0, 1.0, 0.1],
-            "z_score_global":   [2.0, 1.0, 0.1],
-            "polyo":            [0.9, 0.5, 0.1],
+            "compound_id":           ["L01-A1-B1-C1", "L01-A1-B2-C1", "L01-A2-B1-C2"],
+            "library_id":            ["L01", "L01", "L01"],
+            "A":                     ["A1", "A1", "A2"],
+            "B":                     ["B1", "B2", "B1"],
+            "C":                     ["C1", "C1", "C2"],
+            "corrected_count":       [10, 5, 1],
+            "z_score_lib_normalized":    [2.0, 1.0, 0.1],
+            "z_score_global_normalized": [2.0, 1.0, 0.1],
+            "polyo":                 [0.9, 0.5, 0.1],
         })
 
     def _disynthon_ab(self) -> pl.DataFrame:
         return pl.DataFrame({
-            "library_id":       ["L01", "L01", "L01"],
-            "A":                ["A1", "A1", "A2"],
-            "B":                ["B1", "B2", "B1"],
-            "corrected_count":  [15, 5, 1],
-            "tot_compounds":    [2, 2, 2],
-            "mean_count":       [7.5, 2.5, 0.5],
-            "std_count":        [3.5, 0.5, 0.5],
-            "z_score_lib":      [3.0, 1.0, 0.0],
-            "z_score_global":   [3.0, 1.0, 0.0],
-            "polyo":            [0.95, 0.4, 0.05],
+            "library_id":                ["L01", "L01", "L01"],
+            "A":                         ["A1", "A1", "A2"],
+            "B":                         ["B1", "B2", "B1"],
+            "corrected_count_sum":       [15, 5, 1],
+            "line_size":                 [2, 2, 2],
+            "line_strength":             [7.5, 2.5, 0.5],
+            "line_strength_std":         [3.5, 0.5, 0.5],
+            "z_score_lib_normalized":    [3.0, 1.0, 0.0],
+            "z_score_global_normalized": [3.0, 1.0, 0.0],
+            "polyo":                     [0.95, 0.4, 0.05],
         })
 
     def test_join_adds_ab_prefix_columns(self, tmp_path):
@@ -1224,12 +1224,12 @@ class TestJoin:
         ab.write_parquet(ab_path)
         result = join_df(s, [ab_path])
         assert "ab_polyo" in result.columns
-        assert "ab_z_score_lib" in result.columns
-        assert "ab_z_score_global" in result.columns
-        assert "ab_corrected_count" in result.columns
-        assert "ab_tot_compounds" in result.columns
-        assert "ab_mean_count" in result.columns
-        assert "ab_std_count" in result.columns
+        assert "ab_z_score_lib_normalized" in result.columns
+        assert "ab_z_score_global_normalized" in result.columns
+        assert "ab_corrected_count_sum" in result.columns
+        assert "ab_line_size" in result.columns
+        assert "ab_line_strength" in result.columns
+        assert "ab_line_strength_std" in result.columns
 
     def test_join_preserves_all_singleton_rows(self, tmp_path):
         s = self._singletons()
@@ -1262,16 +1262,16 @@ class TestJoin:
         s = self._singletons()
         ab = self._disynthon_ab()
         bc = pl.DataFrame({
-            "library_id":       ["L01", "L01"],
-            "B":                ["B1", "B2"],
-            "C":                ["C1", "C1"],
-            "corrected_count":  [11, 5],
-            "tot_compounds":    [2, 2],
-            "mean_count":       [5.5, 2.5],
-            "std_count":        [1.5, 0.5],
-            "z_score_lib":      [2.5, 1.0],
-            "z_score_global":   [2.5, 1.0],
-            "polyo":            [0.8, 0.3],
+            "library_id":                ["L01", "L01"],
+            "B":                         ["B1", "B2"],
+            "C":                         ["C1", "C1"],
+            "corrected_count_sum":       [11, 5],
+            "line_size":                 [2, 2],
+            "line_strength":             [5.5, 2.5],
+            "line_strength_std":         [1.5, 0.5],
+            "z_score_lib_normalized":    [2.5, 1.0],
+            "z_score_global_normalized": [2.5, 1.0],
+            "polyo":                     [0.8, 0.3],
         })
         ab_path = tmp_path / "disynthon_AB.parquet"
         bc_path = tmp_path / "disynthon_BC.parquet"
@@ -1360,8 +1360,8 @@ class TestSmilesDuplicates:
         ab_path = tmp_path / "disynthon_AB.parquet"
         pl.DataFrame({
             "library_id": ["L01"], "A": ["A0"], "B": ["B0"],
-            "corrected_count": [1], "tot_compounds": [1], "mean_count": [1.0],
-            "std_count": [0.0], "z_score_lib": [0.0], "z_score_global": [0.0], "polyo": [0.0],
+            "corrected_count_sum": [1], "line_size": [1], "line_strength": [1.0],
+            "line_strength_std": [0.0], "z_score_lib_normalized": [0.0], "z_score_global_normalized": [0.0], "polyo": [0.0],
         }).write_parquet(ab_path)
 
         singletons = pl.DataFrame({
@@ -1390,8 +1390,8 @@ class TestSmilesDuplicates:
         ab_path = tmp_path / "disynthon_AB.parquet"
         pl.DataFrame({
             "library_id": ["L01"], "A": ["A0"], "B": ["B0"],
-            "corrected_count": [1], "tot_compounds": [1], "mean_count": [1.0],
-            "std_count": [0.0], "z_score_lib": [0.0], "z_score_global": [0.0], "polyo": [0.0],
+            "corrected_count_sum": [1], "line_size": [1], "line_strength": [1.0],
+            "line_strength_std": [0.0], "z_score_lib_normalized": [0.0], "z_score_global_normalized": [0.0], "polyo": [0.0],
         }).write_parquet(ab_path)
 
         singletons = pl.DataFrame({
@@ -1420,14 +1420,14 @@ class TestLabel:
             "compound_id":    ["cpd1", "cpd2", "cpd3", "cpd4"],
             "library_id":     ["L01"] * 4,
             "corrected_count": [10, 10, 3, 10],
-            "z_score_lib":    [2.0, 0.5, 2.0, 0.5],
-            "z_score_global": [2.0, 0.5, 2.0, 0.5],
+            "z_score_lib_normalized":    [2.0, 0.5, 2.0, 0.5],
+            "z_score_global_normalized": [2.0, 0.5, 2.0, 0.5],
             "polyo":          [5.0, 5.0, 5.0, 0.5],
         }
         if with_disynthons:
-            data["ab_z_score_lib"]    = [0.5, 2.0, 0.5, 0.5]
-            data["ab_z_score_global"] = [0.5, 2.0, 0.5, 0.5]
-            data["ab_polyo"]          = [0.5, 0.5, 0.5, 5.0]
+            data["ab_z_score_lib_normalized"]    = [0.5, 2.0, 0.5, 0.5]
+            data["ab_z_score_global_normalized"] = [0.5, 2.0, 0.5, 0.5]
+            data["ab_polyo"]                     = [0.5, 0.5, 0.5, 5.0]
         if with_smiles:
             data["SMILES"] = ["CC", "CCC", "CC", "CCCC"]
         return pl.DataFrame(data)
@@ -1520,7 +1520,7 @@ class TestLabel:
 
     def test_missing_required_column_raises(self):
         df = pl.DataFrame({"compound_id": ["cpd1"], "corrected_count": [10]})
-        with pytest.raises(ValueError, match="z_score_lib"):
+        with pytest.raises(ValueError, match="z_score_lib_normalized"):
             label_df(df, ["count_zscore_lib"])
 
     def test_missing_count_column_raises(self):

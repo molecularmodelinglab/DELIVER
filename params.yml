@@ -168,8 +168,8 @@ on_duplicate_compound_id: "fail"
 #
 # Available modes:
 #   count               — corrected_count > 5
-#   count_zscore_lib    — corrected_count > 5 AND (z_score_lib > 1 OR any disynthon z_score_lib > 1)
-#   count_zscore_global — corrected_count > 5 AND (z_score_global > 1 OR any disynthon z_score_global > 1)
+#   count_zscore_lib    — corrected_count > 5 AND (z_score_lib_normalized > 1 OR any disynthon z_score_lib_normalized > 1)
+#   count_zscore_global — corrected_count > 5 AND (z_score_global_normalized > 1 OR any disynthon z_score_global_normalized > 1)
 #   count_polyo         — corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 1)
 #
 # Output: labeled.parquet (with label_* columns added to enriched table).

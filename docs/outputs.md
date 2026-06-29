@@ -24,18 +24,18 @@ singleton level, and enrichment metrics at the disynthon level for every cycle p
 | Column            | Type | Description                                           |
 |-------------------|------|-------------------------------------------------------|
 | `corrected_count` | Int  | UMI-corrected count — primary enrichment metric       |
-| `raw_count`       | Int  | Raw read count (present only if supplied in input)    |
+| `raw_reads`       | Int  | Raw read count (present only if supplied in input)    |
 
 ### Singleton enrichment metrics
 
-| Column           | Type  | Description                                                        |
-|------------------|-------|--------------------------------------------------------------------|
-| `z_score`        | Float | Pre-supplied z-score carried through from input (not recalculated) |
-| `z_score_lib`    | Float | Binomial z-score relative to this library's compound space         |
-| `z_score_global` | Float | Binomial z-score relative to all libraries combined                |
-| `polyo`          | Float | PolyO enrichment score (Poisson)                             |
+| Column                     | Type  | Description                                                        |
+|----------------------------|-------|--------------------------------------------------------------------|
+| `z_score`                  | Float | Pre-supplied z-score carried through from input (not recalculated) |
+| `z_score_lib_normalized`   | Float | Binomial z-score relative to this library's compound space         |
+| `z_score_global_normalized`| Float | Binomial z-score relative to all libraries combined                |
+| `polyo`                    | Float | PolyO enrichment score (Poisson)                                   |
 
-`z_score` is only present if supplied in the input. `z_score_lib` and `z_score_global`
+`z_score` is only present if supplied in the input. `z_score_lib_normalized` and `z_score_global_normalized`
 are computed only when `z_score` is **not** present — if a pre-supplied z-score is
 carried through, the pipeline skips recalculation and neither column is added.
 
@@ -43,16 +43,16 @@ carried through, the pipeline skips recalculation and neither column is added.
 
 One set of columns per cycle pair (AB, BC, AC, …). Replace `ab_` with `bc_`, `ac_`, etc.
 
-| Column              | Type  | Description                                                            |
-|---------------------|-------|------------------------------------------------------------------------|
-| `ab_corrected_count` | Int  | Sum of corrected counts for all compounds in this disynthon            |
-| `ab_tot_compounds`  | Int   | Number of singleton compounds in this disynthon (product of remaining cycles) |
-| `ab_mean_count`     | Float | Mean corrected count per compound in this disynthon                    |
-| `ab_std_count`      | Float | Standard deviation of corrected count within this disynthon            |
-| `ab_z_score_lib`    | Float | Binomial z-score of this disynthon relative to library disynthon space |
-| `ab_z_score_global` | Float | Binomial z-score of this disynthon relative to all libraries combined  |
-| `ab_polyo`          | Float | PolyO score for this disynthon                                         |
-| `ab_raw_count`      | Int   | Sum of raw counts (present only if `raw_count` was in input)           |
+| Column                      | Type  | Description                                                            |
+|-----------------------------|-------|------------------------------------------------------------------------|
+| `ab_corrected_count_sum`    | Int   | Sum of corrected counts for all compounds in this disynthon            |
+| `ab_line_size`              | Int   | Number of singleton compounds in this disynthon (product of remaining cycles) |
+| `ab_line_strength`          | Float | Mean corrected count per compound in this disynthon                    |
+| `ab_line_strength_std`      | Float | Standard deviation of corrected count within this disynthon            |
+| `ab_z_score_lib_normalized` | Float | Binomial z-score of this disynthon relative to library disynthon space |
+| `ab_z_score_global_normalized` | Float | Binomial z-score of this disynthon relative to all libraries combined  |
+| `ab_polyo`                  | Float | PolyO score for this disynthon                                         |
+| `ab_raw_reads_sum`          | Int   | Sum of raw reads (present only if `raw_reads` was in input)            |
 
 ---
 
@@ -64,8 +64,8 @@ was enabled in `params.labeling`.
 | Column                   | Type | Positive when |
 |--------------------------|------|---------------|
 | `label_count`            | Bool | `corrected_count > 5` |
-| `label_count_zscore_lib` | Bool | `corrected_count > 5` AND (`z_score_lib > 1` OR any `*_z_score_lib > 1`) |
-| `label_count_zscore_global` | Bool | `corrected_count > 5` AND (`z_score_global > 1` OR any `*_z_score_global > 1`) |
+| `label_count_zscore_lib` | Bool | `corrected_count > 5` AND (`z_score_lib_normalized > 1` OR any `*_z_score_lib_normalized > 1`) |
+| `label_count_zscore_global` | Bool | `corrected_count > 5` AND (`z_score_global_normalized > 1` OR any `*_z_score_global_normalized > 1`) |
 | `label_count_polyo`      | Bool | `corrected_count > 5` AND (`polyo > 4` OR any `*_polyo > 4`) |
 
 Only the modes listed in `params.labeling` are added; others are absent.
@@ -108,12 +108,12 @@ as a stricter filter.
 
 **Labeling modes check disynthon columns dynamically.**
 Modes that involve disynthon metrics (e.g. `count_zscore_lib`) look for any column
-ending in `_z_score_lib` (i.e. `ab_z_score_lib`, `bc_z_score_lib`, etc.). If no
+ending in `_z_score_lib_normalized` (i.e. `ab_z_score_lib_normalized`, `bc_z_score_lib_normalized`, etc.). If no
 disynthon columns are present, the condition falls back to the singleton metric alone.
 This means labeling still works if run on `singletons.parquet` instead of
 `enriched.parquet`, though disynthon-level evidence will not be considered.
 
 **Column presence depends on input.**
-`raw_count`, `SMILES`, and `z_score` (pre-supplied) are only present if they were in
+`raw_reads`, `SMILES`, and `z_score` (pre-supplied) are only present if they were in
 the original input or joined during the pipeline. Code that reads these files should
 check for column presence before using them.
