@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import LIBRARY_ID
+from deliver.postprocess.lib.columns import LIBRARY_ID
 
 
 def merge_smiles(

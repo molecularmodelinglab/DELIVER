@@ -12,7 +12,8 @@
  * - counts.parquet from DELI (or pre-existing)
  *
  * Output:
- * - enrichment.parquet (published to out_dir)
+ * - singletons.parquet  (compound-level enrichment metrics)
+ * - disynthon_*.parquet (disynthon-level enrichment metrics, one file per cycle pair)
  *
  * GCS-specific notes:
  * - Input parquet staged from GCS to container automatically
@@ -70,6 +71,46 @@ process NORMALIZE {
     """
 }
 
+process NORMALIZE_CUSTOM {
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path counts_parquet
+
+    output:
+    path "normalized.parquet"
+
+    script:
+    def cols = params.counts
+    def compound_args
+    if (cols.compound_col) {
+        def nc = cols.num_cycles ? "--num-cycles ${cols.num_cycles}" : ""
+        compound_args = "--compound-col '${cols.compound_col}' ${nc}"
+    } else if (cols.bb_ids_col) {
+        compound_args = "--library-col '${cols.library_col}' --bb-ids-col '${cols.bb_ids_col}'"
+    } else {
+        compound_args = "--library-col '${cols.library_col}' --cycle-cols ${cols.cycle_cols.join(' ')}"
+    }
+    def raw_arg    = cols.raw_count_col ? "--raw-count-col '${cols.raw_count_col}'"   : ""
+    def z_arg      = cols.z_score_col   ? "--z-score-col '${cols.z_score_col}'"       : ""
+    def smiles_arg = cols.smiles_col    ? "--smiles-col '${cols.smiles_col}'"         : ""
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
+        --input  ${counts_parquet} \
+        --output normalized.parquet \
+        --corrected-count-col '${cols.corrected_count_col}' \
+        ${compound_args} \
+        ${raw_arg} \
+        ${z_arg} \
+        ${smiles_arg}
+    """
+
+    stub:
+    """
+    touch normalized.parquet
+    """
+}
+
 process DEDUPLICATE {
     tag "deduplicate"
     publishDir "${params.out_dir}", mode: 'copy'
@@ -82,37 +123,11 @@ process DEDUPLICATE {
     path "deduplicated.parquet", emit: dedup
 
     script:
-    def deli_data_arg = params.deli_data_dir 
-        ? "--deli-data-dir '${params.deli_data_dir}'" 
-        : ""
-
     """
-    echo "========================================"
-    echo "DEDUPLICATE: Removing duplicate compounds"
-    echo "========================================"
-    echo "Input: ${counts_parquet}"
-    
-    # Verify input file exists
-    if [[ ! -f "${counts_parquet}" ]]; then
-        echo "ERROR: Input parquet not found: ${counts_parquet}"
-        ls -lah
-        exit 1
-    fi
-    
-    echo "Input file size: \$(du -h ${counts_parquet} | cut -f1)"
-
-    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \\
-        --input  ${counts_parquet} \\
-        --output deduplicated.parquet \\
-        ${deli_data_arg}
-
-    # Verify output
-    if [[ -f deduplicated.parquet ]]; then
-        echo "Output file size: \$(du -h deduplicated.parquet | cut -f1)"
-    else
-        echo "ERROR: Deduplication failed, output not created"
-        exit 1
-    fi
+    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
+        --input  ${counts_parquet} \
+        --output deduplicated.parquet \
+        --on-duplicate-compound-id '${params.on_duplicate_compound_id}'
     """
 
     stub:
@@ -177,8 +192,8 @@ process MERGE_SMILES {
     """
 }
 
-process ENRICHMENT {
-    tag "enrichment"
+process SINGLETON {
+    tag "singleton"
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
@@ -186,15 +201,15 @@ process ENRICHMENT {
     path library_dict
 
     output:
-    path "enrichment.parquet"
-    path "disynthons_*.parquet"
+    path "singletons.parquet"
+    path "disynthon_*.parquet"
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/enrichment.py \
+    python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
-        --output       enrichment.parquet
+        --output       singletons.parquet
 
     python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
         --input        ${deduplicated_parquet} \
@@ -204,8 +219,60 @@ process ENRICHMENT {
 
     stub:
     """
-    touch enrichment.parquet
-    touch disynthons_AB.parquet
+    touch singletons.parquet
+    touch disynthon_AB.parquet
+    """
+}
+
+process JOIN {
+    tag "join"
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path singletons_parquet
+    path disynthon_files
+
+    output:
+    path "enriched.parquet",            emit: enriched
+    path "enriched_duplicates.parquet", emit: duplicates, optional: true
+
+    script:
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/join.py \
+        --input      ${singletons_parquet} \
+        --disynthons ${disynthon_files} \
+        --output     enriched.parquet
+    """
+
+    stub:
+    """
+    touch enriched.parquet
+    """
+}
+
+process LABEL {
+    tag "label"
+    publishDir "${params.out_dir}", mode: 'copy'
+
+    input:
+    path enriched_parquet
+
+    output:
+    path "labeled.parquet",            emit: labeled
+    path "labeled_duplicates.parquet", emit: duplicates, optional: true
+
+    script:
+    def modes = params.labeling.join(" ")
+    """
+    python ${params.deliver_src_dir}/deliver/postprocess/label.py \
+        --input  ${enriched_parquet} \
+        --modes  ${modes} \
+        --output labeled.parquet
+    """
+
+    stub:
+    """
+    touch labeled.parquet
     """
 }
 
@@ -219,7 +286,13 @@ workflow POSTPROCESS {
     // Path channel: merged counts parquet from DELI (or pre-existing)
 
     main:
-    BUILD_LIBRARY_DICT()
+    def lib_dict_ch
+    if (params.library_dict) {
+        lib_dict_ch = Channel.fromPath(params.library_dict)
+    } else {
+        BUILD_LIBRARY_DICT()
+        lib_dict_ch = BUILD_LIBRARY_DICT.out
+    }
 
     log.info """
     ========================================
@@ -229,26 +302,44 @@ workflow POSTPROCESS {
     ========================================
     """.stripIndent()
 
-    // Step 1: Normalize
-    NORMALIZE(counts)
+    // Step 1: Normalize (DELi format or external format with column mapping)
+    def normalized_ch
+    if (params.counts?.format == "external") {
+        NORMALIZE_CUSTOM(counts)
+        normalized_ch = NORMALIZE_CUSTOM.out
+    } else {
+        NORMALIZE(counts)
+        normalized_ch = NORMALIZE.out
+    }
 
     // Step 2: Add SMILES (optional) and Deduplicate
-    if (params.smiles) {
+    // Skip SMILES join if SMILES is already in the file (counts.smiles_col)
+    def has_embedded_smiles = params.counts?.format == "external" && params.counts?.smiles_col
+    if (params.smiles && !has_embedded_smiles) {
         def smiles_ch = Channel.from(
             params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
         )
-        ADD_SMILES_LIB(NORMALIZE.out.combine(smiles_ch))
-        MERGE_SMILES(NORMALIZE.out, ADD_SMILES_LIB.out.collect())
+        ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
+        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.collect())
         DEDUPLICATE(MERGE_SMILES.out)
     } else {
-        DEDUPLICATE(NORMALIZE.out)
+        DEDUPLICATE(normalized_ch)
     }
 
     // Step 3: Enrichment analysis
-    ENRICHMENT(DEDUPLICATE.out.dedup, BUILD_LIBRARY_DICT.out)
+    SINGLETON(DEDUPLICATE.out.dedup, lib_dict_ch)
+
+    // Step 4: Join singletons and disynthons into a single enriched table
+    JOIN(SINGLETON.out[0], SINGLETON.out[1])
+
+    // Step 5: Label compounds (optional — skipped when params.labeling is null)
+    if (params.labeling) {
+        LABEL(JOIN.out.enriched)
+    }
 
     emit:
-    enrichment   = ENRICHMENT.out[0]
-    disynthons   = ENRICHMENT.out[1]
-    library_dict = BUILD_LIBRARY_DICT.out
+    enriched     = JOIN.out.enriched
+    singletons   = SINGLETON.out[0]
+    disynthons   = SINGLETON.out[1]
+    library_dict = lib_dict_ch
 }

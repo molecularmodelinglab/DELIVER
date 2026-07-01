@@ -147,7 +147,7 @@ process CHECK_FASTP {
 }
 
 // ── Check 4: postprocess scripts ─────────────────────────────────────────
-// Confirms deduplicate.py and enrichment.py are present at DELIVER_SRC_DIR
+// Confirms deduplicate.py and singleton.py are present at DELIVER_SRC_DIR
 // and that click can parse their --help (exercises the full import chain).
 process CHECK_POSTPROCESS_SCRIPTS {
     label 'check'
@@ -165,7 +165,7 @@ process CHECK_POSTPROCESS_SCRIPTS {
     {
         echo "  DELIVER_SRC_DIR: \${DELIVER_SRC_DIR:-NOT SET}"
 
-        for script in deduplicate.py enrichment.py; do
+        for script in deduplicate.py singleton.py; do
             SCRIPT_PATH="\${SRC}/\${script}"
             if [ -f "\${SCRIPT_PATH}" ]; then
                 # Run --help to confirm imports work (click loads the whole module)

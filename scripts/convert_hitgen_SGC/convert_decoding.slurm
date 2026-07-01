@@ -9,7 +9,8 @@
 
 # Usage (run from DELIVER root):
 #   sbatch scripts/convert_hitgen_SGC/convert_decoding.slurm \
-#     --input-dir  /path/to/sgc/excel_files \
+#     --input-dir  /path/to/sgc/txt_files \
+#     --excel-dir  /path/to/sgc/excel_files \
 #     --output-dir /path/to/deli_data
 
 SCRIPT_DIR="${SLURM_SUBMIT_DIR}/scripts/convert_hitgen_SGC"

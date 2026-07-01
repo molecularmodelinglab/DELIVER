@@ -1,16 +1,20 @@
 """
-Convert SGC library Excel files to DELi library JSON + building block CSV format.
+Convert SGC-DEL library files to DELi library JSON + building block CSV format.
 
-Each Excel file ("LIBRARY-NAME BB-Codon-List.xlsx") is converted to:
+Building block data comes from TXT files (tab-separated):
+  similarity_NReagent_SGC-DEL0001.txt
+
+Barcode schema (primers, overhangs, UMI) is parsed from matching Excel files:
+  SGC-DEL0001 BB-Codon-List.xlsx
+
+Each matched pair is converted to:
   <output-dir>/libraries/<lib_name>.json
   <output-dir>/building_blocks/<lib_name>_BBA.csv
   <output-dir>/building_blocks/<lib_name>_BBB.csv
   <output-dir>/building_blocks/<lib_name>_BBC.csv
 
-Barcode schema is parsed directly from the Excel file (no separate config needed).
-
 Usage:
-  python convert_hitgen_SGC.py --input-dir DIR --output-dir DIR
+  python convert_decoding.py --input-dir DIR --excel-dir DIR --output-dir DIR
 """
 
 import argparse
@@ -23,32 +27,28 @@ import pandas as pd
 
 
 # ---------------------------------------------------------------------------
-# Excel layout
-# All row/column indices are 0-based; comments note the 1-based Excel address.
+# TXT column layout
 # ---------------------------------------------------------------------------
-COL_LABEL = 0   # column A — row labels / descriptions
-COL_VALUE = 1   # column B — the actual data values
+CYCLE_COL      = "0"
+HITS_INDEX_COL = "hits_index"
+TAG_COL_INDEX  = 4   # column name = library tag; values = BB tags
 
-# Library tag cell: check the primary row first; fall back to the secondary row.
-LIBRARY_ID_ROW_PRIMARY   = 15   # Excel row 16
-LIBRARY_ID_ROW_SECONDARY = 13   # Excel row 14
-LIBRARY_ID_LABEL         = "Library  ID sequencing"   # expected substring in col A
-
-# Barcode layout row: search all candidate rows for LAYOUT_LABEL in col A.
-LAYOUT_CANDIDATE_ROWS = [17, 19, 20]   # Excel rows 18, 20, 21
-LAYOUT_LABEL          = "Library Tag"  # expected substring in col A
-LAYOUT_PREFIX         = "(5')"         # required prefix of the layout string
+CYCLE_START_VALUE = 1
+EXPECTED_CYCLES   = 3
 
 # ---------------------------------------------------------------------------
-# Building block cycle sheets and output config
+# Excel layout (schema parsing — unchanged from original)
 # ---------------------------------------------------------------------------
-CYCLE_SHEETS = [
-    "Cycle 1 BB & DNA tags",
-    "Cycle 2 BB & DNA tags",
-    "Cycle 3 BB & DNA tags",
-]
-BB_ID_COLUMN  = "Index"
-BB_TAG_COLUMN = "Positive-strand Sequence"
+COL_LABEL = 0
+COL_VALUE = 1
+
+LIBRARY_ID_ROW_PRIMARY   = 15
+LIBRARY_ID_ROW_SECONDARY = 13
+LIBRARY_ID_LABEL         = "Library  ID sequencing"
+
+LAYOUT_CANDIDATE_ROWS = [17, 19, 20]
+LAYOUT_LABEL          = "Library Tag"
+LAYOUT_PREFIX         = "(5')"
 
 DEFAULT_ERROR_CORRECTION = "levenshtein_dist:1,asymmetrical"
 
@@ -57,194 +57,179 @@ DEFAULT_ERROR_CORRECTION = "levenshtein_dist:1,asymmetrical"
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _cell(df: pd.DataFrame, row: int, col: int) -> str:
-    """Return a cell value as a stripped string, or '' if null."""
-    val = df.iloc[row, col]
-    return str(val).strip() if pd.notna(val) else ""
-
-
 def idx_to_bbname(idx: int, lib_name: str) -> str:
     return f"{lib_name}_BB{chr(ord('A') + idx)}"
 
 
-def parse_library_name(filename: str) -> str:
+def _cell(df: pd.DataFrame, row: int, col: int) -> str:
+    val = df.iloc[row, col]
+    return str(val).strip() if pd.notna(val) else ""
+
+
+def txt_lib_name(filename: str) -> str:
+    """'similarity_NReagent_SGC-DEL0001.txt' → 'SGC-DEL0001'"""
+    return os.path.splitext(filename)[0].split("_")[-1]
+
+
+def excel_lib_name(filename: str) -> str | None:
+    """'SGC-DEL0001 BB-Codon-List.xlsx' → 'SGC-DEL0001'"""
     stem = os.path.splitext(filename)[0]
     if " BB-Codon-List" not in stem:
-        raise ValueError(
-            f"Filename does not match expected 'LIBRARY-NAME BB-Codon-List.xlsx': {filename!r}"
-        )
+        return None
     return stem.split(" BB-Codon-List")[0]
 
 
+def index_excel_files(excel_dir: str) -> dict[str, str]:
+    """Return {lib_name: full_path} for all Excel files in excel_dir."""
+    index = {}
+    for f in os.listdir(excel_dir):
+        if not f.lower().endswith((".xlsx", ".xls")):
+            continue
+        name = excel_lib_name(f)
+        if name:
+            index[name] = os.path.join(excel_dir, f)
+    return index
+
+
 # ---------------------------------------------------------------------------
-# Parsing the main sheet
+# Schema parsing from Excel
 # ---------------------------------------------------------------------------
 
 def get_library_tag(df_main: pd.DataFrame) -> str:
-    """
-    Read the library tag from column B.
-    Uses LIBRARY_ID_ROW_PRIMARY if its label cell contains LIBRARY_ID_LABEL,
-    otherwise falls back to LIBRARY_ID_ROW_SECONDARY.
-    The tag is the non-N prefix of the cell value (e.g. 'ACGT' from 'ACGTNNNNN...').
-    """
     label_primary = _cell(df_main, LIBRARY_ID_ROW_PRIMARY, COL_LABEL)
-    if LIBRARY_ID_LABEL in label_primary:
-        row = LIBRARY_ID_ROW_PRIMARY
-    else:
-        row = LIBRARY_ID_ROW_SECONDARY
-    print(f"  Library tag: reading from row {row + 1}")
-
+    row = LIBRARY_ID_ROW_PRIMARY if LIBRARY_ID_LABEL in label_primary else LIBRARY_ID_ROW_SECONDARY
     value = _cell(df_main, row, COL_VALUE)
     m = re.match(r'^([^N]+)', value)
     if not m:
-        raise ValueError(
-            f"Cannot extract library tag from row {row + 1} "
-            f"(expected non-N prefix, got): {value!r}"
-        )
+        raise ValueError(f"Cannot extract library tag from Excel row {row + 1}: {value!r}")
     return m.group(1)
 
 
 def get_schema_params(df_main: pd.DataFrame, library_tag: str) -> dict:
-    """
-    Find the barcode layout row and parse it.
-    Scans LAYOUT_CANDIDATE_ROWS for the first row whose col A contains LAYOUT_LABEL.
-    """
     for row in LAYOUT_CANDIDATE_ROWS:
         if LAYOUT_LABEL in _cell(df_main, row, COL_LABEL):
-            print(f"  Barcode layout: found in row {row + 1}")
             return _parse_barcode_layout(_cell(df_main, row, COL_VALUE), library_tag)
-
-    candidate_excel_rows = [r + 1 for r in LAYOUT_CANDIDATE_ROWS]
-    raise ValueError(
-        f"Could not find barcode layout: expected '{LAYOUT_LABEL}' in column A "
-        f"of rows {candidate_excel_rows}"
-    )
+    raise ValueError(f"Could not find '{LAYOUT_LABEL}' in Excel rows {[r+1 for r in LAYOUT_CANDIDATE_ROWS]}")
 
 
 def _parse_barcode_layout(value: str, library_tag: str) -> dict:
-    """
-    Parse the space-separated barcode layout string.
-
-    Must start with LAYOUT_PREFIX (e.g. "(5')"). Parts after stripping the prefix:
-      [0] + [1]  primer1 tag (two parts joined together)
-      [2]        bb1: XXXXXOVERHANG — X count = bb tag length, rest = overhang
-      [3]        bb2: same format
-      [4]        bb3: same format
-      [5]        library tag position + NNN (UMI) + primer2:
-                   • as X placeholders → X count validated against len(library_tag)
-                   • as real sequence  → sequence validated against library_tag
-    """
     if not value.startswith(LAYOUT_PREFIX):
-        raise ValueError(
-            f"Barcode layout does not start with {LAYOUT_PREFIX!r}: {value[:40]!r}"
-        )
-    body = value[len(LAYOUT_PREFIX):].lstrip()
-
-    parts = body.split()
+        raise ValueError(f"Barcode layout does not start with {LAYOUT_PREFIX!r}: {value[:40]!r}")
+    parts = value[len(LAYOUT_PREFIX):].lstrip().split()
     if len(parts) < 6:
-        raise ValueError(
-            f"Barcode layout has {len(parts)} space-separated parts "
-            f"after {LAYOUT_PREFIX!r}, expected at least 6"
-        )
+        raise ValueError(f"Barcode layout has {len(parts)} parts, expected at least 6")
 
     primer1_tag = parts[0] + parts[1]
-
-    bb_lengths   = []
-    bb_overhangs = []
+    bb_lengths, bb_overhangs = [], []
     for i in range(2, 5):
         m = re.match(r'^(X+)(.+)$', parts[i], re.IGNORECASE)
         if not m:
-            raise ValueError(
-                f"Barcode layout part [{i}] does not match XXXOVERHANG format: {parts[i]!r}"
-            )
+            raise ValueError(f"Barcode layout part [{i}] does not match XXXOVERHANG: {parts[i]!r}")
         bb_lengths.append(len(m.group(1)))
         bb_overhangs.append(m.group(2))
 
-    tail = _strip_library_tag_from_layout(parts[5], library_tag)
-
+    tail = _strip_library_tag(parts[5], library_tag)
     n_match = re.match(r'^(N+)(.+)$', tail, re.IGNORECASE)
     if not n_match:
-        raise ValueError(
-            f"Barcode layout part [5]: expected NNN...PRIMER2 after library tag, got: {tail!r}"
-        )
-    umi_length  = len(n_match.group(1))
-    primer2_tag = n_match.group(2)
+        raise ValueError(f"Expected NNN...PRIMER2 after library tag, got: {tail!r}")
 
     return {
         "primer1_tag":  primer1_tag,
         "bb_lengths":   bb_lengths,
         "bb_overhangs": bb_overhangs,
-        "umi_length":   umi_length,
-        "primer2_tag":  primer2_tag,
+        "umi_length":   len(n_match.group(1)),
+        "primer2_tag":  n_match.group(2),
     }
 
 
-def _strip_library_tag_from_layout(part: str, library_tag: str) -> str:
-    """
-    Remove the library tag position from the start of part and return the remainder.
-    The library tag position is written either as X placeholders or as the real sequence.
-    Prints a warning if the placeholder length or real sequence does not match library_tag.
-    """
+def _strip_library_tag(part: str, library_tag: str) -> str:
     if re.match(r'^X', part, re.IGNORECASE):
         x_count = len(re.match(r'^(X+)', part, re.IGNORECASE).group(1))
         if x_count != len(library_tag):
-            print(
-                f"  WARNING: library placeholder in barcode layout is {x_count} X's "
-                f"but library tag length is {len(library_tag)}"
-            )
+            print(f"  WARNING: layout has {x_count} X's but library tag length is {len(library_tag)}")
         return part[x_count:]
     else:
         real_tag = part[:len(library_tag)]
         if real_tag.upper() != library_tag.upper():
-            print(
-                f"  WARNING: library tag in barcode layout ({real_tag!r}) "
-                f"does not match library tag ({library_tag!r})"
-            )
+            print(f"  WARNING: layout tag {real_tag!r} does not match library tag {library_tag!r}")
         return part[len(library_tag):]
 
 
 # ---------------------------------------------------------------------------
-# Building the output
+# BB data parsing from TXT
 # ---------------------------------------------------------------------------
 
-def build_library_json(library_tag: str, lib_name: str, schema_params: dict, error_correction: str) -> dict:
-    schema = {}
-    schema["primer1"] = {"tag": schema_params["primer1_tag"], "overhang": ""}
+def validate_txt(data: pd.DataFrame) -> tuple[bool, str | None]:
+    library_tag = data.columns[TAG_COL_INDEX]
+    print(f"  Library tag column (TXT): {library_tag}")
 
-    for i, (length, overhang) in enumerate(zip(schema_params["bb_lengths"], schema_params["bb_overhangs"])):
-        schema[f"bb{i + 1}"] = {
-            "tag": "N" * length,
-            "overhang": overhang,
-            "error_correction": error_correction,
-        }
+    cycle_col = data[CYCLE_COL]
+    if cycle_col.iloc[0] != CYCLE_START_VALUE:
+        print(f"  FAIL: first cycle should be {CYCLE_START_VALUE}, got {cycle_col.iloc[0]}")
+        return False, None
 
-    schema["library"] = {"tag": library_tag}
-    schema["umi"]     = {"tag": "N" * schema_params["umi_length"]}
-    schema["primer2"] = {"tag": schema_params["primer2_tag"]}
+    diffs = cycle_col.diff().dropna()
+    if ((diffs != 0) & (diffs != 1)).any():
+        print("  FAIL: cycle sequence is not monotonically non-decreasing")
+        return False, None
+
+    if cycle_col.max() != EXPECTED_CYCLES:
+        print(f"  FAIL: expected {EXPECTED_CYCLES} cycles, got {cycle_col.max()}")
+        return False, None
+
+    counts = data.groupby(CYCLE_COL)[HITS_INDEX_COL].count()
+    print(f"  Building blocks per cycle: {counts.to_dict()}")
+
+    null_mask = data[library_tag].isnull()
+    if null_mask.any():
+        print(f"  WARNING: {null_mask.sum()} rows have null tags")
+
+    return True, library_tag
+
+
+def build_building_blocks(
+    data: pd.DataFrame,
+    library_tag: str,
+    lib_name: str,
+    overhangs: list[str] | None = None,
+) -> dict[str, pd.DataFrame]:
+    result = {}
+    for cycle_num, cycle_data in data.groupby(CYCLE_COL):
+        bb_name = idx_to_bbname(int(cycle_num) - 1, lib_name)
+        df = cycle_data[[HITS_INDEX_COL, library_tag]].copy()
+        df.columns = ["id", "tag"]
+        if overhangs is not None:
+            df["tag"] = df["tag"] + overhangs[int(cycle_num) - 1]
+        df = df.sort_values("id").reset_index(drop=True)
+        result[bb_name] = df
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Library JSON
+# ---------------------------------------------------------------------------
+
+def build_library_json(
+    library_tag: str, lib_name: str, schema: dict, error_correction: str, with_overhang: bool
+) -> dict:
+    out = {}
+    out["primer1"] = {"tag": schema["primer1_tag"], "overhang": ""}
+
+    for i, (length, overhang) in enumerate(zip(schema["bb_lengths"], schema["bb_overhangs"])):
+        entry = {"tag": "N" * length, "error_correction": error_correction}
+        if not with_overhang:
+            entry["overhang"] = overhang
+        out[f"bb{i + 1}"] = entry
+
+    out["library"] = {"tag": library_tag}
+    out["umi"]     = {"tag": "N" * schema["umi_length"]}
+    out["primer2"] = {"tag": schema["primer2_tag"]}
 
     bb_sets = [
         {"cycle": i + 1, "bb_set_name": idx_to_bbname(i, lib_name)}
-        for i in range(len(schema_params["bb_overhangs"]))
+        for i in range(len(schema["bb_overhangs"]))
     ]
-
-    return {
-        "barcode_schema": schema,
-        "bb_sets":        bb_sets,
-        "dna_barcode_on": idx_to_bbname(0, lib_name),
-    }
-
-
-def build_building_blocks(path: str, lib_name: str) -> dict[str, pd.DataFrame]:
-    result = {}
-    for i, sheet_name in enumerate(CYCLE_SHEETS):
-        df = pd.read_excel(path, sheet_name=sheet_name)
-        for col in (BB_ID_COLUMN, BB_TAG_COLUMN):
-            if col not in df.columns:
-                raise ValueError(f"Sheet '{sheet_name}' missing column '{col}'")
-        out = df[[BB_ID_COLUMN, BB_TAG_COLUMN]].copy()
-        out.columns = ["id", "tag"]
-        result[idx_to_bbname(i, lib_name)] = out
-    return result
+    return {"barcode_schema": out, "bb_sets": bb_sets, "dna_barcode_on": idx_to_bbname(0, lib_name)}
 
 
 # ---------------------------------------------------------------------------
@@ -252,16 +237,14 @@ def build_building_blocks(path: str, lib_name: str) -> dict[str, pd.DataFrame]:
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert SGC library Excel files to DELi JSON + CSV format."
-    )
-    parser.add_argument("--input-dir",  required=True, help="Directory containing SGC Excel files.")
-    parser.add_argument("--output-dir", required=True, help="Output directory.")
-    parser.add_argument(
-        "--error-correction",
-        default=DEFAULT_ERROR_CORRECTION,
-        help=f"Error correction string for BB barcodes (default: {DEFAULT_ERROR_CORRECTION}).",
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--input-dir",       required=True, help="Directory containing SGC-DEL TXT files.")
+    parser.add_argument("--excel-dir",       required=True, help="Directory containing matching Excel files (for barcode schema).")
+    parser.add_argument("--output-dir",      required=True, help="Output directory.")
+    parser.add_argument("--error-correction", default=DEFAULT_ERROR_CORRECTION,
+                        help=f"Error correction for BB barcodes (default: {DEFAULT_ERROR_CORRECTION}).")
+    parser.add_argument("--with-overhang",   action="store_true",
+                        help="Append cycle overhang to each BB tag; omit overhang from library JSON schema.")
     args = parser.parse_args()
 
     lib_out = os.path.join(args.output_dir, "libraries")
@@ -271,35 +254,49 @@ def main():
     os.makedirs(os.path.join(args.output_dir, "reactions"),      exist_ok=True)
     os.makedirs(os.path.join(args.output_dir, "tool_compounds"), exist_ok=True)
 
-    files = [
+    excel_index = index_excel_files(args.excel_dir)
+    print(f"Found {len(excel_index)} Excel file(s) in {args.excel_dir}")
+
+    txt_files = [
         f for f in os.listdir(args.input_dir)
-        if os.path.isfile(os.path.join(args.input_dir, f)) and f.lower().endswith((".xlsx", ".xls"))
+        if os.path.isfile(os.path.join(args.input_dir, f)) and f.lower().endswith(".txt")
     ]
-    print(f"Found {len(files)} Excel file(s) in {args.input_dir}")
+    print(f"Found {len(txt_files)} TXT file(s) in {args.input_dir}")
 
     ok, failed = 0, 0
 
-    for filename in sorted(files):
+    for filename in sorted(txt_files):
         print(f"\n--- {filename} ---")
-        path = os.path.join(args.input_dir, filename)
+        lib_name = txt_lib_name(filename)
+        print(f"  Library name: {lib_name}")
 
         try:
-            lib_name = parse_library_name(filename)
-            print(f"  Library name: {lib_name}")
+            excel_path = excel_index.get(lib_name)
+            if not excel_path:
+                raise FileNotFoundError(f"No matching Excel file found for library '{lib_name}' in {args.excel_dir}")
+            print(f"  Excel: {os.path.basename(excel_path)}")
 
-            df_main = pd.read_excel(path, sheet_name=lib_name, header=None)
-            library_tag   = get_library_tag(df_main)
-            schema_params = get_schema_params(df_main, library_tag)
-
+            df_main     = pd.read_excel(excel_path, sheet_name=lib_name, header=None)
+            library_tag = get_library_tag(df_main)
+            schema      = get_schema_params(df_main, library_tag)
             print(f"  Library tag:  {library_tag}")
-            print(f"  Primer1:      {schema_params['primer1_tag']}")
-            print(f"  BB lengths:   {schema_params['bb_lengths']}")
-            print(f"  BB overhangs: {schema_params['bb_overhangs']}")
-            print(f"  UMI length:   {schema_params['umi_length']}")
-            print(f"  Primer2:      {schema_params['primer2_tag']}")
+            print(f"  BB lengths:   {schema['bb_lengths']}")
+            print(f"  BB overhangs: {schema['bb_overhangs']}")
+            print(f"  UMI length:   {schema['umi_length']}")
 
-            library_json    = build_library_json(library_tag, lib_name, schema_params, args.error_correction)
-            building_blocks = build_building_blocks(path, lib_name)
+            data = pd.read_csv(os.path.join(args.input_dir, filename), sep="\t")
+            valid, txt_tag = validate_txt(data)
+            if not valid:
+                print("  Skipped (TXT validation failed)")
+                failed += 1
+                continue
+
+            if txt_tag != library_tag:
+                print(f"  WARNING: TXT library tag ({txt_tag!r}) differs from Excel library tag ({library_tag!r})")
+
+            overhangs       = schema["bb_overhangs"] if args.with_overhang else None
+            library_json    = build_library_json(library_tag, lib_name, schema, args.error_correction, args.with_overhang)
+            building_blocks = build_building_blocks(data, txt_tag, lib_name, overhangs=overhangs)
 
             json_path = os.path.join(lib_out, f"{lib_name}.json")
             with open(json_path, "w") as f:

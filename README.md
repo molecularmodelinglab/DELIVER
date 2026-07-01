@@ -4,13 +4,13 @@ Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 
 **We are using the "patch" branch of DELi as of now:** https://github.com/Popov-Lab-UNC/DELi/tree/patch
 
+For a detailed technical walkthrough of every pipeline step, see [docs/details.md](docs/details.md). For common Longleaf failure modes and how to recover, see [docs/troubleshoot.md](docs/troubleshoot.md).
+
 ## Quick start — Longleaf HPC
 
 ```bash
-# 1. Set deli_dir in params.yml to your local DELi repo path
-# 2. One-time setup on login node (requires Python 3.12.4 module)
-module load python/3.12.4
-bash setup.sh
+# One-time setup on the login node — loads Python 3.12.4 and creates .venv
+bash setup.sh --deli-dir /path/to/DELi
 ```
 
 Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
@@ -157,13 +157,13 @@ Results go to the `out_dir` set in `params_local.yml`.
 cd /path/to/DELIVER
 module load nextflow
 nextflow run pipeline/main.nf \
-  -with-dag dag.html \
+  -with-dag docs/dag.html \
   -params-file params.yml \
   -profile local \
   -preview
 ```
 
-Opens as `dag.html` in the browser.
+Opens as `docs/dag.html` in the browser. A pre-generated copy is kept at [docs/dag.html](docs/dag.html) and [docs/dag.png](docs/dag.png).
 
 ## Run modes
 
@@ -172,7 +172,7 @@ The pipeline detects the mode automatically from `params.yml`:
 | `params.yml` | What runs |
 |--------------|-----------|
 | `read_1` set | FASTQ → preprocess → DELi → postprocessing |
-| `counts_file` set | counts.parquet → postprocessing only |
+| `counts` set | counts.parquet → postprocessing only |
 | both set | error |
 | neither set | error |
 
@@ -202,7 +202,7 @@ Python unit tests for postprocessing scripts are in `tests/`.
 ```
 DELIVER/
 ├── params.yml                        # template — copy to params_local.yml for local runs
-├── setup.sh                          # one-time setup for Longleaf: creates .venv, installs DELi
+├── setup.sh                          # one-time setup for Longleaf: bash setup.sh --deli-dir /path/to/DELi
 ├── setup_local.sh                    # one-time setup for local Mac (uses uv + Python 3.13)
 ├── submit.slurm                      # SLURM launcher for Longleaf
 ├── run_local.sh                      # run script for local Mac
@@ -212,7 +212,7 @@ DELIVER/
 │   └── subworkflows/
 │       ├── preprocess.nf             # CONCAT + FASTP_MERGE (paired-end merge)
 │       ├── deli.nf                   # DELi processes + DELI workflow
-│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + ENRICHMENT
+│       └── postprocess.nf            # BUILD_LIBRARY_DICT + NORMALIZE + ADD_SMILES_LIB + MERGE_SMILES + DEDUPLICATE + SINGLETON + JOIN + LABEL
 ├── src/
 │   └── deliver/
 │       └── postprocess/              # standalone Python CLI scripts called by NF
@@ -221,11 +221,14 @@ DELIVER/
 │           ├── metrics.py            # metrics (binomial z-score, polyO)
 │           ├── build_library_dict.py # build library dictionary JSON from DELi data
 │           ├── normalize.py          # normalize DELi counts → common format
-            ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
-            ├── merge_smiles.py       # merge per-library SMILES parquets into one
+│           ├── normalize_custom.py   # normalize external counts with user-specified column mapping
+│           ├── add_smiles.py         # join SMILES to normalized compounds (one job per library)
+│           ├── merge_smiles.py       # merge per-library SMILES parquets into one
 │           ├── deduplicate.py        # deduplication + aggregation
-│           ├── enrichment.py         # per-compound enrichment scores (z_score_lib, z_score_global, polyo)
-│           └── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
+│           ├── singleton.py          # per-compound enrichment scores (z_score_lib_normalized, z_score_global_normalized, polyo)
+│           ├── disynthons.py         # disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo
+│           ├── join.py               # join singletons + disynthons into enriched.parquet (wide table)
+│           └── label.py              # add label_* boolean columns per labeling mode
 └── scripts/
     ├── convert_hitgen/               # Hitgen TSV → DELi format converter
     └── convert_hitgen_SGC/           # SGC-DEL Excel → DELi format + SMILES parquet converter
@@ -266,10 +269,13 @@ Both scripts create `libraries/` and `building_blocks/` inside `--output-dir`, w
 | DELi decoding: chunk → decode → collect → count → summarize → report | implemented |
 | Build library dictionary (library_dict.json) | implemented |
 | Normalize DELi counts → common format + validation | implemented |
+| Normalize external counts with user-specified column mapping | implemented |
 | SMILES lookup: join per-library SMILES parquets (parallel, one job per library) | implemented |
-| Deduplication + aggregation | TODO |
-| Per-compound enrichment scores (z_score_lib, z_score_global, polyo) | implemented |
+| Deduplication + aggregation | implemented |
+| Per-compound enrichment scores (z_score_lib_normalized, z_score_global_normalized[3], polyo[4]) — singletons.parquet | implemented |
 | Disynthon counts + statistics (AB, BC, AC, …) with z-scores and polyo | implemented |
+| Join singletons + disynthons into enriched.parquet (wide table) | implemented |
+| Label compounds with boolean label_* columns (count, z-score, polyo modes) — labeled.parquet | implemented |
 
 ## params.yml
 
@@ -281,9 +287,46 @@ The only file you need to edit. All parameters are documented inline in `params.
 |-----------|-------------|
 | `read_1` | Read 1 sequencing file(s) — one or more lanes, `.fastq` or `.fastq.gz` |
 | `read_2` | Read 2 sequencing file(s) — paired-end only; omit for single-end |
-| `counts_file` | Pre-computed `counts.parquet` — set instead of `read_1` to skip decoding |
+| `counts` | Pre-computed counts parquet — set instead of `read_1` to skip decoding (see below) |
 | `out_dir` | Directory where all results will be written |
-| `deli_data_dir` | Path to DELi data directory (library definitions, building blocks) |
+| `deli_data_dir` | Path to DELi data directory (library definitions, building blocks). Not required when `library_dict` is set. |
+| `library_dict` | Path to a pre-computed `library_dict.json`. When set, `BUILD_LIBRARY_DICT` is skipped and `deli_data_dir` is not needed. Useful in counts mode on a machine without DELi data. |
+| `on_duplicate_compound_id` | What to do when the same `compound_id` appears more than once: `"fail"` (default) — abort with an error; `"sum"` — merge by summing counts. |
+
+### counts (optional)
+
+Set `counts` instead of `read_1` to skip decoding and run postprocessing only. `counts.format` is always required.
+
+**DELi output format** — use when the file came from a previous DELIVER or DELi run:
+
+```yaml
+counts:
+  file:   "/path/to/prefix_counts.parquet"
+  format: "deli"
+```
+
+**External format** — use for files from other sources (Hitgen, SGC, your own processing). Specify how to find the compound identity and counts:
+
+```yaml
+counts:
+  file:   "/path/to/counts.parquet"
+  format: "external"
+  corrected_count_col: "UMI_count"   # required: UMI-corrected count column
+
+  # Compound identity — specify exactly ONE of:
+  compound_col: "compound_id"        # (a) already in "library-bb1-bb2-bb3" format
+  # OR
+  library_col:  "library_id"         # (b) library ID column
+  bb_ids_col:   "bb_ids"             #     + comma-separated bb IDs column
+  # OR
+  library_col:  "library_id"         # (c) library ID column
+  cycle_cols:   [A, B, C]            #     + individual bb ID columns in cycle order
+
+  # Optional:
+  raw_count_col: "raw_count"         # raw read count — required for PolyO scores; omit to skip PolyO
+  z_score_col:   "z_score"           # pre-calculated z-score — carried through, not recalculated
+  smiles_col:    "SMILES"            # SMILES column — carried through to output
+```
 
 ### Selection metadata
 
@@ -319,6 +362,23 @@ smiles:
 | `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
 
 Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
+
+### Labeling (optional)
+
+Adds one `label_<mode>` boolean column per mode to `enriched.parquet` and writes `labeled.parquet`. Omit `labeling` (or set to `null`) to skip.
+
+```yaml
+labeling:
+  - count               # corrected_count > 5
+  - count_zscore        # corrected_count > 5 AND z_score > 1 (pre-supplied z-score only)
+  - count_zscore_lib    # corrected_count > 5 AND (z_score_lib_normalized > 1 OR any disynthon z_score_lib_normalized > 1)    [3]
+  - count_zscore_global # corrected_count > 5 AND (z_score_global_normalized > 1 OR any disynthon z_score_global_normalized > 1) [3]
+  - count_polyo         # corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 4)                [4]
+```
+
+Each mode validates that its required columns are present and fails with a clear error if they are not. `z_score_lib_normalized`/`z_score_global_normalized` modes require singleton enrichment to have been computed (not applicable if a pre-supplied `z_score` was used without running `singleton.py`).
+
+If a `SMILES` column is present and any SMILES appear more than once, duplicate rows are also written to `labeled_duplicates.parquet` sorted by SMILES.
 
 ### Decode settings
 
@@ -360,4 +420,8 @@ Per-process resource settings can be adjusted in the `longleaf` profile in `pipe
 
 [1] Shifu Chen. 2025. fastp 1.0: An ultra-fast all-round tool for FASTQ data quality control and preprocessing. iMeta 2025: https://doi.org/10.1002/imt2.107
 
-[2]Wellnitz J, Novy B, Maxfield T, Lin S-H, Zhilinskaya I, Axtman M, Leisner T, Merten E, Norris-Drouin JL, Hardy BP, Pearce KH, Popov KI. (2025). *Open-Source DNA-Encoded Library informatics Package for Design, Decoding, and Analysis: DELi*. bioRxiv. https://doi.org/10.1101/2025.02.25.640184
+[2] Wellnitz J, Novy B, Maxfield T, Lin S-H, Zhilinskaya I, Axtman M, Leisner T, Merten E, Norris-Drouin JL, Hardy BP, Pearce KH, Popov KI. (2025). *Open-Source DNA-Encoded Library informatics Package for Design, Decoding, and Analysis: DELi*. bioRxiv. https://doi.org/10.1101/2025.02.25.640184
+
+[3] Faver JC, Riehle K, Lancia DR Jr., Milbank JBJ, Kollmann CS, Simmons N, Yu Z, Matzuk MM. (2019). Quantitative Comparison of Enrichment from DNA-Encoded Chemical Library Selections. *ACS Combinatorial Science*, 21(2), 75–82. https://doi.org/10.1021/acscombsci.8b00116
+
+[4] Chen Q, Li Y, Lin C, Chen L, Luo H, Xia S, Liu C, Cheng X, Liu C, Li J, Dou D. (2022). Expanding the DNA-encoded library toolbox: identifying small molecules targeting RNA. *Nucleic Acids Research*, 50(12), e67. https://doi.org/10.1093/nar/gkac173

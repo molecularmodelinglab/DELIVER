@@ -6,10 +6,10 @@ from pathlib import Path
 
 import polars as pl
 
-from deliver.postprocess.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_COUNT
-from deliver.postprocess.common import validate_common_format
+from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_READS
+from deliver.postprocess.lib.common import validate_common_format
 
-DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}
+DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}  # DELi output column names
 
 
 def _max_cycles(bb_ids: pl.Series) -> int:
@@ -47,8 +47,8 @@ def normalize(df: pl.DataFrame) -> pl.DataFrame:
 
     return (
         _add_cycle_columns(df, n_cycles)
-        .rename({"count": CORRECTED_COUNT})
-        .select([COMPOUND_ID, LIBRARY_ID] + cycle_cols + [RAW_COUNT, CORRECTED_COUNT])
+        .rename({"count": CORRECTED_COUNT, "raw_count": RAW_READS})
+        .select([COMPOUND_ID, LIBRARY_ID] + cycle_cols + [RAW_READS, CORRECTED_COUNT])
     )
 
 
