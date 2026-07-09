@@ -103,10 +103,20 @@ echo "[4/5] Building Docker image …"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ORA support: forward ORAD_URL (from .env) so the image installs `orad` for
+# .ora inputs. If ORAD_URL is unset/empty the image builds WITHOUT orad and any
+# .ora decode (CONCAT, DECOMPRESS, ORA_DIAGNOSTICS) fails with 'orad: not found'.
+if [[ -n "${ORAD_URL:-}" ]]; then
+    echo "  → ORA support: installing orad from ORAD_URL"
+else
+    echo "  ⚠ ORAD_URL not set in .env — image will NOT support .ora inputs"
+fi
+
 docker build \
     --tag  "$FULL_IMAGE" \
     --tag  "${REGISTRY}/${PROJECT}/${REPO_NAME}/${IMAGE_NAME}:latest" \
     --platform=linux/amd64 \
+    --build-arg ORAD_URL="${ORAD_URL:-}" \
     --file Dockerfile \
     .
 

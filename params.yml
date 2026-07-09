@@ -111,6 +111,12 @@ save_failed: false
 # config_file: optional path to a custom DELi config file
 # config_file: null
 
+# ORA inputs: .fastq.ora files (Illumina DRAGEN ORA) are decompressed
+# automatically in CONCAT via `orad` (must be on PATH: module-load on Longleaf,
+# or build the container with --build-arg ORAD_URL=...). Standard reference-free
+# FASTQ ORA needs no reference; set ora_reference only for reference-based ORA.
+# ora_reference: /path/to/oradata
+
 
 # smiles: optional SMILES lookup configuration.
 # If provided, SMILES are added to each compound after normalization and

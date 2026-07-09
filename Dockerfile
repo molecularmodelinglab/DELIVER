@@ -39,6 +39,31 @@ RUN wget -q "http://opengene.org/fastp/fastp.${FASTP_VERSION}" \
         -O /usr/local/bin/fastp && \
     chmod +x /usr/local/bin/fastp
 
+# ── orad (Illumina ORA / DRAGEN decompression) ────────────────
+# Only needed when input FASTQs are .ora. Illumina distributes the "ORA
+# Decompression Software" tarball (login-gated), so supply its URL at build:
+#   docker build --build-arg ORAD_URL=https://.../orad.2.x.x.linux.tar.gz ...
+# The tarball layout is orad_2_x_x/{orad,oradata}; adjust --strip-components if
+# your build differs. When ORAD_URL is empty the image builds without ORA support.
+ARG ORAD_URL=""
+RUN if [ -n "$ORAD_URL" ]; then \
+        wget -q "$ORAD_URL" -O /tmp/orad.tar.gz && \
+        mkdir -p /opt/orad && \
+        tar -xzf /tmp/orad.tar.gz -C /opt/orad --strip-components=1 && \
+        ln -sf /opt/orad/orad /usr/local/bin/orad && \
+        rm /tmp/orad.tar.gz && \
+        orad --version ; \
+    else \
+        echo "ORAD_URL not set — .ora decompression unavailable in this image"; \
+    fi
+
+# orad finds its reference (refbin) by searching ./, $HOME/oradata/, ./oradata/,
+# then $ORA_REF_PATH/. The tarball ships the default human reference at
+# /opt/orad/oradata/refbin, so point ORA_REF_PATH at that dir for reference-based
+# .ora decompression. The pipeline only overrides this when params.ora_reference
+# is set (else it leaves this image default in place).
+ENV ORA_REF_PATH=/opt/orad/oradata
+
 # ── uv + Python dependencies ──────────────────────────────────
 RUN pip install --no-cache-dir uv
 
@@ -91,6 +116,12 @@ EOF
 
 RUN fastp --version 2>&1 | head -1
 RUN deli --version
+# Verify orad can locate its reference (only when orad was installed).
+# Non-fatal: prints the resolved refbin path (or a warning) without failing the
+# build, since the exact flag name can vary across orad versions.
+RUN if command -v orad >/dev/null 2>&1; then \
+        orad --check-ora-reference-path || echo "WARN: orad reference check failed — verify ORA_REF_PATH"; \
+    fi
 
 # ── Runtime settings ──────────────────────────────────────────
 USER root

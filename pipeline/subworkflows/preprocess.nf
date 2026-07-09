@@ -22,9 +22,16 @@ nextflow.enable.dsl = 2
 // ============================================================================
 // CONCAT PROCESS
 // ============================================================================
-// Concatenates multiple R1 or R2 files into a single .fastq or .fastq.gz
-// Preserves compression state: if all inputs are .gz, output is .gz
-// Works with both GCS and local paths (Nextflow stages GCS files automatically)
+// Concatenates multiple R1 or R2 lane files into a single FASTQ, dispatching on
+// file type so each input is decompressed with the right tool:
+//   .gz  -> gzip stream        (zcat, or a direct cat when every input is .gz)
+//   .ora -> Illumina ORA       (orad -c --raw, DRAGEN ORA decompression)
+//   else -> already uncompressed (cat)
+// Output compression:
+//   all inputs .gz            -> ${read_type}.fastq.gz  (cheap: gzip members concat)
+//   anything else (incl .ora) -> ${read_type}.fastq     (uncompressed)
+// Both forms are handled downstream (fastp uses `zcat -f`; DECOMPRESS gunzips).
+// Works with GCS and local paths (Nextflow stages remote files automatically).
 
 process CONCAT {
     tag "${read_type}"
@@ -32,24 +39,52 @@ process CONCAT {
     input:
     tuple val(read_type), path(files)
     // read_type: "R1" or "R2"
-    // files: one or more .fastq/.fastq.gz (Nextflow stages from GCS if needed)
+    // files: one or more .fastq / .fastq.gz / .fastq.ora (staged from GCS if needed)
 
     output:
     tuple val(read_type), path("${read_type}.fastq*"), emit: fastq
-    // Output matches input compression: .fastq.gz if inputs were gz, .fastq otherwise
 
     script:
+    // ORA_REF_PATH is only consulted for reference-based ORA; unset is fine for
+    // standard reference-free FASTQ .ora. See params.ora_reference.
+    def ora_ref = params.ora_reference ? "export ORA_REF_PATH='${params.ora_reference}'" : "true"
     """
-    # Determine if input files are gzipped
-    first=\$(echo "${files}" | tr ' ' '\\n' | head -1)
-    if [[ "\$first" == *.gz ]]; then
-        # All inputs are gzipped — concatenate directly
-        echo "Concatenating gzipped files: ${files}"
+    ${ora_ref}
+
+    # Classify inputs so we can take the cheapest correct path.
+    any_ora=false
+    all_gz=true
+    for f in ${files}; do
+        case "\$f" in
+            *.ora) any_ora=true; all_gz=false ;;
+            *.gz)  ;;
+            *)     all_gz=false ;;
+        esac
+    done
+
+    if [[ "\$all_gz" == true ]]; then
+        # Fast path: concatenated gzip members form one valid gzip stream.
+        echo "Concatenating gzipped files -> ${read_type}.fastq.gz"
         cat ${files} > ${read_type}.fastq.gz
     else
-        # Inputs are uncompressed
-        echo "Concatenating uncompressed files: ${files}"
-        cat ${files} > ${read_type}.fastq
+        # Mixed / uncompressed / ORA: decompress per file type into one FASTQ.
+        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq"
+        : > ${read_type}.fastq
+        for f in ${files}; do
+            case "\$f" in
+                *.ora)
+                    # Illumina ORA (DRAGEN). -c: to stdout, --raw: uncompressed FASTQ.
+                    # If your orad build uses different flags, change them here only.
+                    orad -c --raw -t ${task.cpus} "\$f" >> ${read_type}.fastq
+                    ;;
+                *.gz)
+                    zcat "\$f" >> ${read_type}.fastq
+                    ;;
+                *)
+                    cat "\$f" >> ${read_type}.fastq
+                    ;;
+            esac
+        done
     fi
     """
 
@@ -77,15 +112,24 @@ process DECOMPRESS {
     path "merged.fastq", emit: fastq
 
     script:
+    def ora_ref = params.ora_reference ? "export ORA_REF_PATH='${params.ora_reference}'" : "true"
     """
-    if [[ "${gz_file}" == *.gz ]]; then
-        echo "Decompressing: ${gz_file}"
-        gunzip -c "${gz_file}" > merged.fastq
-    else
-        echo "File already uncompressed: ${gz_file}"
-        mv "${gz_file}" merged.fastq
-    fi
-    
+    ${ora_ref}
+    case "${gz_file}" in
+        *.ora)
+            echo "Decompressing ORA: ${gz_file}"
+            orad -c --raw -t ${task.cpus} "${gz_file}" > merged.fastq
+            ;;
+        *.gz)
+            echo "Decompressing: ${gz_file}"
+            gunzip -c "${gz_file}" > merged.fastq
+            ;;
+        *)
+            echo "File already uncompressed: ${gz_file}"
+            mv "${gz_file}" merged.fastq
+            ;;
+    esac
+
     # Verify output
     if [[ -f merged.fastq ]]; then
         echo "Output file size: \$(wc -c < merged.fastq) bytes"
@@ -118,15 +162,10 @@ process FASTP_MERGE {
     ln -s ${r1} input_R1.${r1_ext}
     ln -s ${r2} input_R2.${r2_ext}
 
-    # Count input lines (divide by 4 for FASTQ records)
-    r1_lines=\$(zcat -f input_R1.${r1_ext} | wc -l)
-    r2_lines=\$(zcat -f input_R2.${r2_ext} | wc -l)
-    echo "Input R1 lines: \$r1_lines (reads: \$(( r1_lines / 4 )))"
-    echo "Input R2 lines: \$r2_lines (reads: \$(( r2_lines / 4 )))"
-
-
-
-
+    # NOTE: read counts are NOT computed with `zcat | wc -l` here — for a
+    # ~400M-read run that decompresses both inputs an extra time end-to-end
+    # (a large, avoidable I/O pass just for a log line). fastp already reports
+    # before/after read counts in fastp.json.
     fastp \
         --in1 input_R1.${r1_ext} \
         --in2 input_R2.${r2_ext} \
@@ -135,12 +174,9 @@ process FASTP_MERGE {
         --correction \
         -w ${params.fastp_threads} \
         -h fastp.html \
-        -j fastp.json \
+        -j fastp.json
 
-
-    merged_lines=\$(wc -l < merged.fastq)
-    echo "Output merged.fastq lines: \$merged_lines (reads: \$(( merged_lines / 4 )))"
-    echo "Output merged.fastq size: \$(wc -c < merged.fastq) bytes"
+    echo "fastp merge complete — read counts available in fastp.json"
     """
     
 
@@ -150,6 +186,91 @@ process FASTP_MERGE {
     """
 }
 
+process ORA_DIAGNOSTICS {
+    tag "ora_diagnostics"
+    publishDir "${params.out_dir}/qc", mode: 'copy'
+
+    input:
+    path r1_files
+    path r2_files
+    // r2_files may be an empty list (single-end); its loop then runs zero times.
+
+    output:
+    path "ora_diagnostics.txt", emit: report
+
+    script:
+    // Same ORA reference handling as CONCAT/DECOMPRESS (unset is fine for
+    // standard reference-free FASTQ .ora).
+    def ora_ref = params.ora_reference ? "export ORA_REF_PATH='${params.ora_reference}'" : "true"
+    """
+    ${ora_ref}
+    set -o pipefail   # so a failed orad in a `decode | wc -l` pipe fails the task
+    report=ora_diagnostics.txt
+    : > "\$report"
+    say() { echo "\$@" | tee -a "\$report"; }
+
+    # decode(): stream ONE file to raw FASTQ on stdout, dispatching by type
+    #   .ora -> orad (DRAGEN)   .gz -> zcat   else -> cat
+    decode() {
+        case "\$1" in
+            *.ora) orad -c --raw -t ${task.cpus} "\$1" ;;
+            *.gz)  zcat "\$1" ;;
+            *)     cat "\$1" ;;
+        esac
+    }
+
+    say "==================================================================="
+    say " ORA DIAGNOSTICS   (extra/temporary step — not part of final code) "
+    say "==================================================================="
+
+    run_start=\$SECONDS
+
+    # ---- [1] rows in each single file (decode once, STREAMED, timed) --------
+    # Pure streaming: decode -> wc -l, nothing is written to disk, so no large
+    # scratch disk is needed. Combining files is plain concatenation, so the
+    # combined and total row counts (steps 2 & 3) are just the SUM of the
+    # per-file line counts collected here.
+    say ""
+    say "[1] Rows in each single file"
+    r1_lines=0
+    for f in ${r1_files}; do
+        t0=\$SECONDS
+        lines=\$(decode "\$f" | wc -l)
+        dt=\$(( SECONDS - t0 ))
+        say "    [R1] \$f : \$lines lines / \$(( lines / 4 )) reads  (\${dt}s)"
+        r1_lines=\$(( r1_lines + lines ))
+    done
+    r2_lines=0
+    for f in ${r2_files}; do
+        t0=\$SECONDS
+        lines=\$(decode "\$f" | wc -l)
+        dt=\$(( SECONDS - t0 ))
+        say "    [R2] \$f : \$lines lines / \$(( lines / 4 )) reads  (\${dt}s)"
+        r2_lines=\$(( r2_lines + lines ))
+    done
+
+    # ---- [2] rows after combining the 2 reads (R1 & R2 concatenated) --------
+    say ""
+    say "[2] Rows after combining the 2 reads"
+    say "    R1 combined : \$r1_lines lines / \$(( r1_lines / 4 )) reads"
+    say "    R2 combined : \$r2_lines lines / \$(( r2_lines / 4 )) reads"
+
+    # ---- [3] total rows after decompress (R1 + R2) --------------------------
+    say ""
+    say "[3] Total rows after decompress (R1 + R2)"
+    total_lines=\$(( r1_lines + r2_lines ))
+    say "    total : \$total_lines lines / \$(( total_lines / 4 )) reads"
+
+    # ---- timing summary -----------------------------------------------------
+    say ""
+    say "[time] total wall time: \$(( SECONDS - run_start ))s"
+    """
+
+    stub:
+    """
+    echo "stub ora diagnostics" > ora_diagnostics.txt
+    """
+}
 
 
 // ============================================================================
@@ -184,15 +305,19 @@ workflow PREPROCESS {
 
         r2_files = r2_ch.collect()
 
+        // === EXTRA / TEMPORARY: .ora diagnostics (counts + timing) ===========
+        // diag = ORA_DIAGNOSTICS(r1_files, r2_files)
+
+        // --- production merge flow (DISABLED during diagnostics; restore for final) ---
         r1_ch_tuple = r1_files.map { files -> tuple("R1", files) }
         r2_ch_tuple = r2_files.map { files -> tuple("R2", files) }
         reads_ch = r1_ch_tuple.mix(r2_ch_tuple)
-
+        
         concat_out = CONCAT(reads_ch)
-
+        
         r1_fastq = concat_out.fastq.filter { it[0] == "R1" }.map { it[1] }
         r2_fastq = concat_out.fastq.filter { it[0] == "R2" }.map { it[1] }
-
+        
         fastq_out = FASTP_MERGE(r1_fastq, r2_fastq).fastq
 
         // Logging — done after channel ops so paths are still URI strings
@@ -212,6 +337,11 @@ workflow PREPROCESS {
 
     } else {
 
+        // === EXTRA / TEMPORARY: .ora diagnostics (counts + timing) ===========
+        // Single-end: pass an empty list for R2 (its loop runs zero times).
+        // diag = ORA_DIAGNOSTICS(r1_files, Channel.value([]))
+
+        // --- production single-end flow (DISABLED during diagnostics; restore for final) ---
         reads_ch = r1_files.map { files -> tuple("R1", files) }
         concat_out = CONCAT(reads_ch)
         fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
@@ -228,5 +358,6 @@ workflow PREPROCESS {
     }
 
     emit:
-    fastq = fastq_out
+    fastq = fastq_out          // production output
+    // report = diag.report          // ORA file -diagnostic-only output (temporary)
 }
