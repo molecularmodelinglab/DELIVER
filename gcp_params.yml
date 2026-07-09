@@ -14,10 +14,21 @@ read_1:
   - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R1_001.1000000.fastq.gz"
 
 read_2:
-  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz"
-  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz"
+  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz
+  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz
 
-out_dir: "gs://deliver-process/temp-processed-files"
+
+
+# read_1:
+#   - "gs://del_sickkids/data/WDR91_20260603_VernalisData_TCAGseq/NGS1_S25_L002_R1_001.fastq.ora"
+
+
+# read_2:
+#   - "gs://del_sickkids/data/WDR91_20260603_VernalisData_TCAGseq/NGS1_S25_L002_R2_001.fastq.ora"
+
+
+# out_dir: directory where all results will be written
+out_dir: gs://deliver-process/temp-processed-files-temp
 
 # counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
 #         Set instead of read_1/read_2. See params.yml for full format documentation.
@@ -39,13 +50,13 @@ library_dict: null
 selection_id: "my_selection_test"
 
 # target_id: name of the target protein
-target_id: "WDR91_test"
+target_id: "WDR91_test_ora"
 
 # selection_condition: free-text description of selection conditions (e.g. "10nM", "-")
 selection_condition: "-"
 
 # date_ran: date the selection was run (YYYY-MM-DD)
-date_ran: "2026-05-01"
+date_ran: "2026-07-01"
 
 # additional_info: any extra notes to store in the decode.yaml
 additional_info: ""
