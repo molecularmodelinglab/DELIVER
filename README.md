@@ -15,7 +15,10 @@ bash setup.sh --deli-dir /path/to/DELi
 
 Edit the remaining fields in `params.yml` (see [parameter reference](#paramsyml) below), then submit. Each pipeline step runs as a separate SLURM job — see [How the pipeline runs on Longleaf](#how-the-pipeline-runs-on-longleaf) for details.
 
+**Run sbatch command from the DELIVER directory**.
+
 ```bash
+cd /path/to/DELIVER
 sbatch submit.slurm \
   --work-dir    /path/to/work \
   --cache-dir   /path/to/cache \
