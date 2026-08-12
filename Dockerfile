@@ -4,6 +4,7 @@ FROM python:3.13-slim
 
 ARG DELI_REF=patch
 ARG FASTP_VERSION=0.23.4
+ARG FASTQC_VERSION=0.12.1
 
 LABEL org.opencontainers.image.title="DELIVER"
 LABEL org.opencontainers.image.description="DEL pipeline — GCP Cloud Batch image"
@@ -18,7 +19,9 @@ RUN apt-get update -qq && \
         gzip \
         curl \
         gnupg \
-        procps \                   
+        procps \
+        unzip \
+        default-jre-headless \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,6 +41,14 @@ RUN ln -s /usr/local/bin/python3 /usr/bin/python3
 RUN wget -q "http://opengene.org/fastp/fastp.${FASTP_VERSION}" \
         -O /usr/local/bin/fastp && \
     chmod +x /usr/local/bin/fastp
+
+# ── FastQC ────────────────────────────────────────────────────
+RUN wget -q "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/fastqc_v${FASTQC_VERSION}.zip" \
+        -O /tmp/fastqc.zip && \
+    unzip -q /tmp/fastqc.zip -d /opt && \
+    chmod +x /opt/FastQC/fastqc && \
+    ln -s /opt/FastQC/fastqc /usr/local/bin/fastqc && \
+    rm /tmp/fastqc.zip
 
 # ── orad (Illumina ORA / DRAGEN decompression) ────────────────
 # Only needed when input FASTQs are .ora. Illumina distributes the "ORA
@@ -115,6 +126,7 @@ print("pyarrow :", pyarrow.__version__)
 EOF
 
 RUN fastp --version 2>&1 | head -1
+RUN fastqc --version
 RUN deli --version
 # Verify orad can locate its reference (only when orad was installed).
 # Non-fatal: prints the resolved refbin path (or a warning) without failing the

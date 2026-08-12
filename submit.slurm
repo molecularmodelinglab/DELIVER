@@ -10,6 +10,7 @@
 # Usage:
 #   sbatch submit.slurm --work-dir DIR --cache-dir DIR --params-file FILE --log-dir DIR [--resume]
 #
+#   --deliver-dir   Path to the DELIVER pipeline directory (default: current directory)
 #   --work-dir      Nextflow work directory (intermediate files)
 #   --cache-dir     Nextflow cache directory (.nextflow metadata; use a per-user path)
 #   --params-file   path to params.yml
@@ -22,17 +23,18 @@
 #
 # Example:
 #   sbatch submit.slurm \
+#     --deliver-dir /path/to/DELIVER \
 #     --work-dir    /path/to/work \
 #     --cache-dir   /path/to/cache \
 #     --params-file /path/to/DELIVER/params.yml \
 #     --log-dir     /path/to/logs \
 #     --resume
 
-DELIVER_DIR="${SLURM_SUBMIT_DIR}"
 RESUME=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --deliver-dir)  DELIVER_DIR="$2"; shift 2 ;;
         --work-dir)     WORK_DIR="$2";    shift 2 ;;
         --cache-dir)    CACHE_DIR="$2";   shift 2 ;;
         --params-file)  PARAMS_FILE="$2"; shift 2 ;;
@@ -41,6 +43,10 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown argument: $1"; exit 1 ;;
     esac
 done
+
+if [ -z "$DELIVER_DIR" ]; then
+    DELIVER_DIR="."
+fi
 
 if [ -z "$WORK_DIR" ] || [ -z "$CACHE_DIR" ] || [ -z "$PARAMS_FILE" ] || [ -z "$LOG_DIR" ]; then
     echo "Usage: sbatch submit.slurm --work-dir DIR --cache-dir DIR --params-file FILE --log-dir DIR [--resume]"
