@@ -68,21 +68,24 @@ process CONCAT {
         echo "Concatenating gzipped files -> ${read_type}.fastq.gz"
         cat ${files} > ${read_type}.fastq.gz
     else
-        # Mixed / uncompressed / ORA: decompress per file type into one FASTQ.
-        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq"
-        : > ${read_type}.fastq
+        # Mixed / uncompressed / ORA: decompress per file type, always emit
+        # .fastq.gz — concatenated gzip members form one valid gzip stream
+        # (same trick as the fast path above), so already-gzipped sources are
+        # appended as-is and only non-gz sources are piped through gzip.
+        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq.gz"
+        : > ${read_type}.fastq.gz
         for f in ${files}; do
             case "\$f" in
                 *.ora)
                     # Illumina ORA (DRAGEN). -c: to stdout, --raw: uncompressed FASTQ.
                     # If your orad build uses different flags, change them here only.
-                    orad -c --raw -t ${task.cpus} "\$f" >> ${read_type}.fastq
+                    orad -c --raw -t ${task.cpus} "\$f" | gzip -c >> ${read_type}.fastq.gz
                     ;;
                 *.gz)
-                    zcat "\$f" >> ${read_type}.fastq
+                    cat "\$f" >> ${read_type}.fastq.gz
                     ;;
                 *)
-                    cat "\$f" >> ${read_type}.fastq
+                    gzip -c "\$f" >> ${read_type}.fastq.gz
                     ;;
             esac
         done
@@ -145,16 +148,16 @@ process DECOMPRESS {
 
 
 process FASTP_MERGE {
-    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq' ? null : fn }
+    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq.gz' ? null : fn }
 
     input:
     path r1
     path r2
 
     output:
-    path "merged.fastq", emit: fastq
-    path "fastp.html",   emit: html
-    path "fastp.json",   emit: json
+    path "merged.fastq.gz", emit: fastq
+    path "fastp.html",      emit: html
+    path "fastp.json",      emit: json
 
     script:
     def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
@@ -167,11 +170,13 @@ process FASTP_MERGE {
     # ~400M-read run that decompresses both inputs an extra time end-to-end
     # (a large, avoidable I/O pass just for a log line). fastp already reports
     # before/after read counts in fastp.json.
+    # merged_out ends in .gz so fastp gzip-compresses the merged output itself
+    # (multi-threaded, using the same -w workers) instead of writing raw FASTQ.
     fastp \
         --in1 input_R1.${r1_ext} \
         --in2 input_R2.${r2_ext} \
         -m \
-        --merged_out merged.fastq \
+        --merged_out merged.fastq.gz \
         --correction \
         -w ${params.fastp_threads} \
         -h fastp.html \
@@ -179,11 +184,12 @@ process FASTP_MERGE {
 
     echo "fastp merge complete — read counts available in fastp.json"
     """
-    
+
 
     stub:
     """
-    touch merged.fastq fastp.html fastp.json
+    printf '@stub_read1\\nACGTACGT\\n+\\nIIIIIIII\\n' | gzip -c > merged.fastq.gz
+    touch fastp.html fastp.json
     """
 }
 

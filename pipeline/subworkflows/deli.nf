@@ -167,6 +167,9 @@ process CollectDecodeChunks {
     path "${prefix}_collected.ndjson", emit: ndjson
 
     script:
+    // NOTE: DELi's `decode collect --compress` is present in the CLI but hard-disabled
+    // in this installed version (polars sink_ndjson doesn't support compression yet —
+    // it exits 1 if passed), so this output stays uncompressed until that's fixed upstream.
     """
     deli ${deli_args} decode collect \
         *_decoded.tsv \
@@ -395,7 +398,7 @@ workflow DELI {
 
     // CRITICAL FIX: Use the FASTQ Path from the input channel, NOT from files.txt
     // The files.txt contains GCS paths which won't stage properly in downstream tasks
-    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true)
+    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
 
@@ -430,7 +433,7 @@ workflow DELI {
     )
 
     count_chunks = collected_decodes.ndjson
-        .splitText(by: 500_000, file: true)
+        .splitText(by: 500_000, file: true, compress: true)
 
     counts = CountChunk(
         count_chunks,
