@@ -159,7 +159,7 @@ process MergeDecodeStatistics {
 
 process CollectDecodeChunks {
     input:
-    path("*_decoded.tsv", arity: '1..*')
+    path decoded_files
     val prefix
     val deli_args
 
@@ -337,7 +337,7 @@ process MergeDebugFailed {
     publishDir "${params.out_dir}/debug", mode: 'copy'
 
     input:
-    path("*_failed_decoding.tsv", arity: '1..*')
+    path failed_files
     val prefix
 
     output:
