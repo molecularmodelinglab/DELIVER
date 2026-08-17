@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=2G
-#SBATCH --time=06:00:00
+#SBATCH --time=12:00:00
 
 # Usage:
 #   sbatch submit.slurm --work-dir DIR --cache-dir DIR --params-file FILE --log-dir DIR [--resume]

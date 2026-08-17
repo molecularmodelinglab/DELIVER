@@ -77,9 +77,10 @@ process CONCAT {
         for f in ${files}; do
             case "\$f" in
                 *.ora)
-                    # Illumina ORA (DRAGEN). -c: to stdout, --raw: uncompressed FASTQ.
-                    # If your orad build uses different flags, change them here only.
-                    orad -c --raw -t ${task.cpus} "\$f" | gzip -c >> ${read_type}.fastq.gz
+                    # Illumina ORA (DRAGEN). -c: to stdout. Omitting --raw makes
+                    # orad decompress natively to gzip (its default format) instead
+                    # of writing raw FASTQ through a separate gzip process.
+                    orad -c -t ${task.cpus} "\$f" >> ${read_type}.fastq.gz
                     ;;
                 *.gz)
                     cat "\$f" >> ${read_type}.fastq.gz
