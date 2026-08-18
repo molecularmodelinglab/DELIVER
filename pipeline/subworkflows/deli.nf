@@ -102,10 +102,10 @@ process DecodeChunk {
     val deli_args
 
     output:
-    path "${prefix}_${fastq_chunk.simpleName}_decoded.tsv", emit: decoded_tsv
-    path "${prefix}_${fastq_chunk.simpleName}_decode_statistics.json", emit: decode_stats
-    path "${prefix}_${fastq_chunk.simpleName}_deli.log", emit: deli_log
-    path "${prefix}_${fastq_chunk.simpleName}_failed_decoding.tsv", emit: failed_tsv, optional: true
+    path "${prefix}_${task.index}_decoded.tsv", emit: decoded_tsv
+    path "${prefix}_${task.index}_decode_statistics.json", emit: decode_stats
+    path "${prefix}_${task.index}_deli.log", emit: deli_log
+    path "${prefix}_${task.index}_failed_decoding.tsv", emit: failed_tsv, optional: true
 
     script:
     def fastq_info_flag  = params.save_fastq_info ? "--save-fastq-info" : ""
@@ -115,19 +115,19 @@ process DecodeChunk {
         "${selection_file}" \
         "${fastq_chunk}" \
         --out-dir ./ \
-        --prefix "${prefix}_${fastq_chunk.simpleName}" \
+        --prefix "${prefix}_${task.index}" \
         --skip-report \
         ${fastq_info_flag} \
         ${save_failed_flag}
 
-    mv deli.log ${prefix}_${fastq_chunk.simpleName}_deli.log
+    mv deli.log ${prefix}_${task.index}_deli.log
     """
 
     stub:
     """
-    touch ${prefix}_${fastq_chunk.simpleName}_decoded.tsv
-    echo '{}' > ${prefix}_${fastq_chunk.simpleName}_decode_statistics.json
-    touch ${prefix}_${fastq_chunk.simpleName}_deli.log
+    touch ${prefix}_${task.index}_decoded.tsv
+    echo '{}' > ${prefix}_${task.index}_decode_statistics.json
+    touch ${prefix}_${task.index}_deli.log
     """
 }
 
