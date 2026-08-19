@@ -364,7 +364,7 @@ smiles:
 | `compound` (or value of `compound_col`) | `String` | Compound ID matching the `compound_id` column in `normalized.parquet`, e.g. `L01-1-1-1` |
 | `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
 
-Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
+Lookup is a DuckDB join against each file, so no particular row order is required. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
 
 ### Labeling (optional)
 

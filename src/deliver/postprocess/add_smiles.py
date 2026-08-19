@@ -1,4 +1,4 @@
-"""Add SMILES column to compounds via per-library sorted parquet lookup."""
+"""Add SMILES column to compounds via per-library parquet join."""
 
 import argparse
 import json
@@ -17,7 +17,7 @@ def add_smiles(
     smiles_col: str,
     library: str | None = None,
 ) -> pl.DataFrame:
-    """Add SMILES column by DuckDB lookup from per-library sorted parquet files.
+    """Add SMILES column by DuckDB join against per-library parquet files.
 
     If library is given, process only that library (used for parallel execution).
     Raises ValueError if any compound in a covered library has no SMILES match.
@@ -33,13 +33,12 @@ def add_smiles(
         df_lib = df.filter(pl.col(LIBRARY_ID) == lib_id)
         if len(df_lib) == 0:
             continue
-        needed = df_lib["compound_id"].to_list()
-        needed_str = ", ".join(f"'{c}'" for c in needed)
+        needed = df_lib.select("compound_id").unique()
         smiles_df = pl.from_arrow(
             duckdb.execute(f"""
-                SELECT {compound_col} AS compound_id, {smiles_col}
-                FROM read_parquet('{file_path}')
-                WHERE {compound_col} IN ({needed_str})
+                SELECT s.{compound_col} AS compound_id, s.{smiles_col}
+                FROM read_parquet('{file_path}') AS s
+                JOIN needed ON needed.compound_id = s.{compound_col}
             """).arrow()
         )
         joined = df_lib.join(smiles_df, on="compound_id", how="left")
