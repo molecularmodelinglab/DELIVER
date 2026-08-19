@@ -77,4 +77,5 @@ nextflow run pipeline/main.nf \
   $RESUME_FLAG \
   -profile longleaf \
   -w "$WORK_DIR" \
-  -params-file "$PARAMS_FILE"
+  -params-file "$PARAMS_FILE" \
+  --log_dir "$LOG_DIR"
