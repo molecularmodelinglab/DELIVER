@@ -6,8 +6,8 @@ import math
 import polars as pl
 import pytest
 
-from deliver.postprocess.add_smiles import main as add_smiles
-from deliver.postprocess.merge_smiles import main as merge_smiles_cli
+from deliver.postprocess.add_smiles import main as add_smiles, add_smiles as add_smiles_df
+from deliver.postprocess.merge_smiles import main as merge_smiles_cli, merge_smiles_reports
 from deliver.postprocess.build_library_dict import main as build_library_dict
 from deliver.postprocess.lib.common import validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
@@ -329,6 +329,72 @@ class TestAddSmiles:
         assert set(df["library_id"].to_list()) == {"L01"}
         assert len(df) == 2
 
+    def test_below_threshold_missing_kept_with_null_smiles(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(199)] + ["L01-MISSING-1"],
+            "library_id":  ["L01"] * 200,
+        })
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(199)])
+        result, report = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES")
+        assert len(result) == 200
+        assert result.filter(pl.col("compound_id") == "L01-MISSING-1")["SMILES"][0] is None
+        row = report.to_dicts()[0]
+        assert row["library_id"] == "L01"
+        assert row["n_compounds"] == 200
+        assert row["n_missing"] == 1
+        assert row["n_corrupted"] == 0
+        assert row["missing_fraction"] == pytest.approx(0.005)
+
+    def test_above_threshold_raises_below_threshold_does_not(self, tmp_path):
+        # 2/10 = 20% missing
+        df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
+            "library_id":  ["L01"] * 10,
+        })
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(8)])
+        result, _ = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", max_missing_fraction=0.25)
+        assert len(result) == 10
+        with pytest.raises(ValueError, match="L01"):
+            add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", max_missing_fraction=0.01)
+
+    def test_cli_max_missing_fraction_flag(self, tmp_path):
+        inp_df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
+            "library_id":  ["L01"] * 10,
+        })
+        inp = tmp_path / "norm.parquet"
+        inp_df.write_parquet(inp)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(8)])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--max-missing-fraction", "0.25", "--output", str(out)])
+        assert len(pl.read_parquet(out)) == 10
+
+    def test_cli_writes_report_when_requested(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        report = tmp_path / "report.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--output", str(out), "--report", str(report)])
+        assert report.exists()
+        report_df = pl.read_parquet(report)
+        assert report_df["library_id"].to_list() == ["L01"]
+        assert report_df["n_missing"].to_list() == [0]
+
+    def test_cli_no_report_file_when_not_requested(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        assert list(tmp_path.glob("*report*")) == []
+
 
 class TestMergeSmiles:
     def _write_orig(self, tmp_path):
@@ -433,6 +499,48 @@ class TestMergeSmiles:
     def test_missing_required_args_fails(self):
         with pytest.raises(SystemExit):
             merge_smiles_cli([])
+
+    def _write_report(self, tmp_path, lib_id, n_compounds, n_missing, n_corrupted=0):
+        df = pl.DataFrame({
+            "library_id": [lib_id], "n_compounds": [n_compounds],
+            "n_missing": [n_missing], "n_corrupted": [n_corrupted],
+            "missing_fraction": [n_missing / n_compounds],
+        })
+        p = tmp_path / f"{lib_id}_report.parquet"
+        df.write_parquet(p)
+        return p
+
+    def test_reports_merged_sorted_worst_first(self, tmp_path):
+        r1 = self._write_report(tmp_path, "L01", 100, 1)   # 1%
+        r2 = self._write_report(tmp_path, "L02", 100, 5)   # 5%
+        merged = merge_smiles_reports([r1, r2])
+        assert merged["library_id"].to_list() == ["L02", "L01"]
+
+    def test_cli_writes_report_when_requested(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        report = self._write_report(tmp_path, "L01", 2, 0)
+        out = tmp_path / "merged.parquet"
+        report_out = tmp_path / "smiles_report.tsv"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
+                          "--reports", str(report), "--output", str(out),
+                          "--report-output", str(report_out)])
+        assert report_out.exists()
+        lines = report_out.read_text().strip().splitlines()
+        assert len(lines) == 2  # header + 1 row
+
+    def test_cli_no_report_when_not_requested(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        assert list(tmp_path.glob("*.tsv")) == []
 
 
 class TestDeduplicate:

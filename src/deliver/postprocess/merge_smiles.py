@@ -28,12 +28,19 @@ def merge_smiles(
     return pl.concat(partials)
 
 
+def merge_smiles_reports(report_paths: list[Path]) -> pl.DataFrame:
+    """Concatenate per-library SMILES coverage reports, worst coverage first."""
+    return pl.concat([pl.read_parquet(p) for p in report_paths]).sort("missing_fraction", descending=True)
+
+
 def main(args=None):
     parser = argparse.ArgumentParser(description="Merge per-library SMILES parquets.")
-    parser.add_argument("--input",      required=True,  help="Original normalized parquet (for uncovered libraries)")
-    parser.add_argument("--partials",   required=True, nargs="+", help="Per-library parquets with SMILES added")
-    parser.add_argument("--smiles-col", default="SMILES", help="SMILES column name (default: SMILES)")
-    parser.add_argument("--output",     required=True,  help="Output merged parquet")
+    parser.add_argument("--input",         required=True,  help="Original normalized parquet (for uncovered libraries)")
+    parser.add_argument("--partials",      required=True, nargs="+", help="Per-library parquets with SMILES added")
+    parser.add_argument("--reports",       default=None, nargs="+", help="Per-library SMILES coverage report parquets")
+    parser.add_argument("--smiles-col",    default="SMILES", help="SMILES column name (default: SMILES)")
+    parser.add_argument("--output",        required=True,  help="Output merged parquet")
+    parser.add_argument("--report-output", default=None,   help="Output merged SMILES coverage report (TSV)")
     parsed = parser.parse_args(args)
 
     merge_smiles(
@@ -41,6 +48,9 @@ def main(args=None):
         [Path(p) for p in parsed.partials],
         parsed.smiles_col,
     ).write_parquet(parsed.output)
+
+    if parsed.reports:
+        merge_smiles_reports([Path(p) for p in parsed.reports]).write_csv(parsed.report_output, separator="\t")
 
 
 if __name__ == "__main__":
