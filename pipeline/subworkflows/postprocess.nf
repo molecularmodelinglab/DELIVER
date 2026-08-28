@@ -60,7 +60,7 @@ process NORMALIZE {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
         --input  ${counts_parquet} \
         --output normalized.parquet
     """
@@ -95,7 +95,7 @@ process NORMALIZE_CUSTOM {
     def z_arg      = cols.z_score_col   ? "--z-score-col '${cols.z_score_col}'"       : ""
     def smiles_arg = cols.smiles_col    ? "--smiles-col '${cols.smiles_col}'"         : ""
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
         --input  ${counts_parquet} \
         --output normalized.parquet \
         --corrected-count-col '${cols.corrected_count_col}' \
@@ -124,7 +124,7 @@ process DEDUPLICATE {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
         --input  ${counts_parquet} \
         --output deduplicated.parquet \
         --on-duplicate-compound-id '${params.on_duplicate_compound_id}'
@@ -153,7 +153,7 @@ process ADD_SMILES_LIB {
     def max_missing  = params.smiles.max_missing_fraction ?: 0.01
     """
     echo '${smiles_map}' > smiles_map.json
-    python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
         --input        ${normalized_parquet} \
         --smiles-map   smiles_map.json \
         --compound-col ${compound_col} \
@@ -186,7 +186,7 @@ process MERGE_SMILES {
     script:
     def smiles_col = params.smiles.smiles_col ?: "SMILES"
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
         --input         ${normalized_parquet} \
         --partials      ${partials} \
         --reports       ${reports} \
@@ -216,12 +216,12 @@ process SINGLETON {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output       singletons.parquet
 
-    python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output-dir   .
@@ -248,7 +248,7 @@ process JOIN {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/join.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/join.py \
         --input      ${singletons_parquet} \
         --disynthons ${disynthon_files} \
         --output     enriched.parquet
@@ -274,7 +274,7 @@ process LABEL {
     script:
     def modes = params.labeling.join(" ")
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/label.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/label.py \
         --input  ${enriched_parquet} \
         --modes  ${modes} \
         --output labeled.parquet

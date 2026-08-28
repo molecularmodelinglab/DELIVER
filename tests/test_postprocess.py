@@ -183,6 +183,18 @@ class TestValidateCommonFormat:
         })
         validate_common_format(df)  # should not raise
 
+    def test_null_byte_compound_id_fails(self):
+        # signature of a corrupted string buffer (e.g. an uninitialized
+        # allocation that never got written) rather than a real duplicate
+        df = pl.DataFrame({
+            "compound_id":      ["L01-1-2-3", "\x00" * 9],
+            "library_id":       ["L01", "L01"],
+            "raw_reads":        [5, 5],
+            "corrected_count":  [4, 4],
+        })
+        with pytest.raises(SystemExit):
+            validate_common_format(df)
+
 
 class TestBuildLibraryDict:
     def test_runs_and_writes_output(self, deli_data_dir, tmp_path):

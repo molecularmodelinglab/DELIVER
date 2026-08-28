@@ -18,6 +18,20 @@ def validate_common_format(df: pl.DataFrame) -> None:
         print(f"Error: missing required columns: {missing}", file=sys.stderr)
         sys.exit(1)
 
+    # Null bytes in compound_id are a signature of a corrupted string buffer
+    # (e.g. an uninitialized allocation that never got written), not a real
+    # value — surface it here, at the point compound_id is first validated,
+    # instead of downstream where it just looks like an unexplained duplicate.
+    corrupt = df.filter(pl.col(COMPOUND_ID).str.contains("\x00", literal=True))
+    if corrupt.height > 0:
+        ids = corrupt[COMPOUND_ID].unique().to_list()
+        print(
+            f"Error: {len(ids)} compound_id value(s) contain null bytes "
+            f"(corrupted data, not a real ID): {ids[:5]}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
 
 def load_inputs(input_path: Path, library_dict_path: Path) -> tuple[pl.DataFrame, dict]:
     """Load and validate input parquet + library dict. Exits on error."""
