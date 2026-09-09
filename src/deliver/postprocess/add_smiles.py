@@ -8,7 +8,7 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
-from deliver.postprocess.lib.columns import LIBRARY_ID
+from deliver.postprocess.lib.columns import COMPOUND_ID, LIBRARY_ID
 
 _REPORT_SCHEMA = {
     "library_id": pl.String,
@@ -26,6 +26,7 @@ def add_smiles(
     smiles_col: str,
     library: str | None = None,
     max_missing_fraction: float = 0.01,
+    library_dict: dict[str, dict[str, int]] | None = None,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Add SMILES column by DuckDB join against per-library parquet files.
 
@@ -35,6 +36,17 @@ def add_smiles(
     at or below max_missing_fraction — that's expected decode noise. Above that
     fraction, raises ValueError instead, since it likely signals a real problem
     (reference/decode mismatch) rather than noise.
+
+    library_dict (the same {library_id: {cycle: count}} dict used elsewhere in
+    postprocess) is used to build the SMILES-reference join key from only the
+    cycles with more than 1 real building block, since a cycle with exactly 1
+    (no combinatorial diversity) is dropped from the reference file's own IDs —
+    e.g. a compound_id "L01-2-1-1" (3 cycles, 3rd always constant) is looked up
+    as "L01-2-1" if the reference only enumerates the first two cycles. Built from
+    the already-separated library_id/cycle columns, never by splitting compound_id
+    itself, so hyphens in a library_id (e.g. "SGC-DEL0001") are never at risk.
+    Falls back to the full compound_id when library_dict has no entry for a
+    library, matching today's behavior.
 
     Returns (result, report) — report has one row per covered library with
     n_compounds/n_missing/n_corrupted/missing_fraction, for visibility into
@@ -52,15 +64,22 @@ def add_smiles(
         df_lib = df.filter(pl.col(LIBRARY_ID) == lib_id)
         if len(df_lib) == 0:
             continue
-        needed = df_lib.select("compound_id").unique()
-        smiles_df = pl.from_arrow(
-            duckdb.execute(f"""
-                SELECT s.{compound_col} AS compound_id, s.{smiles_col}
-                FROM read_parquet('{file_path}') AS s
-                JOIN needed ON needed.compound_id = s.{compound_col}
-            """).arrow()
-        )
-        joined = df_lib.join(smiles_df, on="compound_id", how="left")
+
+        lib_counts = (library_dict or {}).get(lib_id)
+        if lib_counts:
+            real_cycles = sorted(k for k, count in lib_counts.items() if count > 1)
+            key_expr = pl.concat_str([pl.col(LIBRARY_ID)] + [pl.col(c) for c in real_cycles], separator="-")
+        else:
+            key_expr = pl.col(COMPOUND_ID)
+        df_lib = df_lib.with_columns(key_expr.alias("_smiles_key"))
+
+        needed = df_lib.select("_smiles_key").unique()
+        smiles_df = duckdb.execute(f"""
+            SELECT s.{compound_col} AS _smiles_key, s.{smiles_col}
+            FROM read_parquet('{file_path}') AS s
+            JOIN needed ON needed._smiles_key = s.{compound_col}
+        """).pl()
+        joined = df_lib.join(smiles_df, on="_smiles_key", how="left").drop("_smiles_key")
         missing = joined.filter(pl.col(smiles_col).is_null())["compound_id"].to_list()
         corrupted = joined.filter(pl.col(smiles_col).str.contains("\x00"))["compound_id"].to_list()
         bad = missing + corrupted
@@ -110,6 +129,7 @@ def main(args=None):
         "--max-missing-fraction", type=float, default=0.01,
         help="Fail if more than this fraction of a library's compounds have missing/corrupted SMILES (default: 0.01)",
     )
+    parser.add_argument("--library-dict", default=None,   help="Library dictionary JSON file (for matching non-diversity cycles in the SMILES reference's IDs)")
     parser.add_argument("--output",       required=True,  help="Output parquet file")
     parser.add_argument("--report",       default=None,   help="Output per-library SMILES coverage report parquet")
     parsed = parser.parse_args(args)
@@ -117,9 +137,12 @@ def main(args=None):
     with open(parsed.smiles_map) as f:
         smiles_files = json.load(f)
 
+    library_dict = json.loads(Path(parsed.library_dict).read_text()) if parsed.library_dict else None
+
     df = pl.read_parquet(parsed.input)
     result, report = add_smiles(
-        df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.max_missing_fraction
+        df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.max_missing_fraction,
+        library_dict,
     )
     result.write_parquet(parsed.output)
     if parsed.report:

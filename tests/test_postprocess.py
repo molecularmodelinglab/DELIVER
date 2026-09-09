@@ -46,6 +46,20 @@ def deli_data_dir(tmp_path):
     }))
     (bb_dir / "L02_BBA.csv").write_text("id,tag\n1,AAA\n2,TTT\n")
 
+    # L03: 2 real diversity cycles + a 3rd declared cycle with only 1 real building
+    # block (several degenerate DNA tags for that one id) — a single-building-block
+    # cycle, mirroring a real-world library like HGODEL0041.
+    (libraries_dir / "L03.json").write_text(json.dumps({
+        "bb_sets": [
+            {"cycle": 1, "bb_set_name": "L03_BBA"},
+            {"cycle": 2, "bb_set_name": "L03_BBB"},
+            {"cycle": 3, "bb_set_name": "L03_BBC"},
+        ]
+    }))
+    (bb_dir / "L03_BBA.csv").write_text("id,tag\n1,AAA\n2,TTT\n")
+    (bb_dir / "L03_BBB.csv").write_text("id,tag\n1,GGG\n2,CCC\n")
+    (bb_dir / "L03_BBC.csv").write_text("id,tag\n1,AGT\n1,AGT2\n1,AGT3\n")
+
     return tmp_path
 
 
@@ -238,6 +252,36 @@ class TestBuildLibraryDict:
         with pytest.raises(SystemExit):
             build_library_dict([])
 
+    def test_single_building_block_cycle_omitted(self, deli_data_dir, tmp_path):
+        # L03's 3rd cycle has only 1 real building block (no combinatorial diversity)
+        # and should be omitted entirely, like a cycle that was never declared.
+        out = tmp_path / "library_dict.json"
+        build_library_dict(["--deli-data-dir", str(deli_data_dir), "--output", str(out)])
+        data = json.loads(out.read_text())
+        assert data["L03"] == {"A": 2, "B": 2}
+        assert "C" not in data["L03"]
+
+    def test_zero_real_building_blocks_omitted_with_warning(self, tmp_path, capsys):
+        libraries_dir = tmp_path / "libraries"
+        bb_dir = tmp_path / "building_blocks"
+        libraries_dir.mkdir()
+        bb_dir.mkdir()
+        (libraries_dir / "L04.json").write_text(json.dumps({
+            "bb_sets": [
+                {"cycle": 1, "bb_set_name": "L04_BBA"},
+                {"cycle": 2, "bb_set_name": "L04_BBB"},
+            ]
+        }))
+        (bb_dir / "L04_BBA.csv").write_text("id,tag\n1,AAA\n2,TTT\n")
+        (bb_dir / "L04_BBB.csv").write_text("id,tag\n")  # empty: 0 real building blocks
+
+        out = tmp_path / "library_dict.json"
+        build_library_dict(["--deli-data-dir", str(tmp_path), "--output", str(out)])
+        data = json.loads(out.read_text())
+        assert data["L04"] == {"A": 2}
+        assert "B" not in data["L04"]
+        assert "0 real building blocks" in capsys.readouterr().err
+
 
 class TestAddSmiles:
     def _make_input(self, tmp_path):
@@ -406,6 +450,57 @@ class TestAddSmiles:
         out = tmp_path / "out.parquet"
         add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
         assert list(tmp_path.glob("*report*")) == []
+
+    def test_join_key_drops_single_building_block_cycle(self, tmp_path):
+        # L03 has a single-building-block 3rd cycle (C, always "1"); the SMILES
+        # reference only enumerates the two real cycles, so the join key must drop C.
+        df = pl.DataFrame({
+            "compound_id":     ["L03-1-1-1", "L03-2-1-1"],
+            "library_id":      ["L03", "L03"],
+            "A":               ["1", "2"],
+            "B":               ["1", "1"],
+            "C":               ["1", "1"],
+            "raw_reads":       [3, 1],
+            "corrected_count": [3, 1],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        # Enumerated reference uses 2-component IDs (no C, since it's non-diversity)
+        smiles_file = self._make_smiles_file(tmp_path, "L03", [("L03-1-1", "CCO"), ("L03-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L03": str(smiles_file)}))
+        library_dict = tmp_path / "library_dict.json"
+        library_dict.write_text(json.dumps({"L03": {"A": 2, "B": 2}}))  # no "C": non-diversity
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--library-dict", str(library_dict), "--output", str(out)])
+        result = pl.read_parquet(out).sort("compound_id")
+        assert result.filter(pl.col("compound_id") == "L03-1-1-1")["SMILES"][0] == "CCO"
+        assert result.filter(pl.col("compound_id") == "L03-2-1-1")["SMILES"][0] == "CCC"
+
+    def test_no_library_dict_falls_back_to_full_compound_id(self, tmp_path):
+        # Without --library-dict, behavior is unchanged: join on the full compound_id.
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        df = pl.read_parquet(out).sort("compound_id")
+        assert df.filter(pl.col("compound_id") == "L01-1-1")["SMILES"][0] == "CCO"
+
+    def test_zero_matches_raises_clean_error_not_crash(self, tmp_path):
+        # Regression test: a DuckDB join that matches nothing used to crash with an
+        # opaque pyarrow error instead of surfacing the intended missing-fraction
+        # ValueError (pl.from_arrow(...) couldn't handle a zero-row Arrow result).
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [("L01-NOMATCH-1", "CCO")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        with pytest.raises(ValueError, match="100.00%"):
+            add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
 
 
 class TestMergeSmiles:
@@ -915,6 +1010,30 @@ class TestDisynthons:
         assert df["line_strength"].to_list() == pytest.approx([3.0, 1.0])
         assert df["line_strength_std"].to_list() == pytest.approx([1.0, 0.0])
         assert df["z_score_lib_normalized"].to_list() == pytest.approx([0.5, -0.5])
+
+    def test_single_building_block_cycle_key_omitted_behaves_like_2_cycle(self, tmp_path):
+        # Data still has 3 components (C is physically decoded, always "1" for every
+        # row — a single-building-block cycle), but library_dict omits the "C" key
+        # (as build_library_dict.py now does for count<=1) rather than never having
+        # declared it. disynthons.py should behave identically to test_2_cycle_produces_only_ab.
+        df = pl.DataFrame({
+            "compound_id":     ["L01-1-1-1", "L01-2-1-1"],
+            "library_id":      ["L01", "L01"],
+            "A":               ["1", "2"],
+            "B":               ["1", "1"],
+            "C":               ["1", "1"],
+            "raw_reads":       [6, 2],
+            "corrected_count": [6, 2],
+        })
+        inp = tmp_path / "norm.parquet"
+        df.write_parquet(inp)
+        lib = tmp_path / "lib.json"
+        lib.write_text(json.dumps({"L01": {"A": 2, "B": 2}}))  # no "C": single-BB, omitted
+        out = tmp_path / "out"
+        disynthons(["--input", str(inp), "--library-dict", str(lib), "--output-dir", str(out)])
+        assert (out / "disynthon_AB.parquet").exists()
+        assert not (out / "disynthon_BC.parquet").exists()
+        assert not (out / "disynthon_AC.parquet").exists()
 
     def test_multi_library_not_mixed(self, tmp_path):
         # Two libraries both have A="1", B="1" — must stay separate.

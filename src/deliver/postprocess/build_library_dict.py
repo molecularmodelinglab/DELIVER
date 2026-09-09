@@ -25,7 +25,12 @@ def _count_real_building_blocks(bb_csv: Path) -> int:
 
 
 def main(args=None):
-    """Build library dictionary JSON: {library_id: {A: count, B: count, ...}}."""
+    """Build library dictionary JSON: {library_id: {A: count, B: count, ...}}.
+
+    A cycle with <= 1 real building block adds no combinatorial diversity, so it's
+    omitted from the dict — same as a cycle never declared in bb_sets, which
+    downstream code (disynthons.py etc.) already knows to skip.
+    """
     parser = argparse.ArgumentParser(description="Build library dictionary JSON from DELi building blocks directory.")
     parser.add_argument("--deli-data-dir", required=True, help="DELi data directory (must contain libraries/ and building_blocks/ subdirs).")
     parser.add_argument("--output",        required=True, help="Output JSON file.")
@@ -47,7 +52,10 @@ def main(args=None):
         for bb_set in data.get("bb_sets", []):
             bb_set_name = bb_set["bb_set_name"]
             count = _count_real_building_blocks(bb_dir / f"{bb_set_name}.csv")
-            lib_dict[_bb_position_key(bb_set["cycle"])] = count
+            if count == 0:
+                print(f"Warning: {lib_id} bb_set {bb_set_name!r} has 0 real building blocks (possible data error)", file=sys.stderr)
+            if count > 1:
+                lib_dict[_bb_position_key(bb_set["cycle"])] = count
         result[lib_id] = lib_dict
 
     Path(parsed.output).write_text(json.dumps(result, indent=2))

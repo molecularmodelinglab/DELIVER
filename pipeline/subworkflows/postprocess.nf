@@ -140,7 +140,7 @@ process ADD_SMILES_LIB {
     tag "${lib_id}"
 
     input:
-    tuple path(normalized_parquet), val(lib_id), val(smiles_path)
+    tuple path(normalized_parquet), val(lib_id), val(smiles_path), path(library_dict)
 
     output:
     path "${lib_id}_with_smiles.parquet", emit: smiles
@@ -150,7 +150,7 @@ process ADD_SMILES_LIB {
     def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
-    def max_missing  = params.smiles.max_missing_fraction ?: 0.01
+    def max_missing  = params.smiles.max_missing_fraction ?: 0.5
     """
     echo '${smiles_map}' > smiles_map.json
     POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
@@ -159,6 +159,7 @@ process ADD_SMILES_LIB {
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
         --library      ${lib_id} \
+        --library-dict ${library_dict} \
         --max-missing-fraction ${max_missing} \
         --output       ${lib_id}_with_smiles.parquet \
         --report       ${lib_id}_smiles_report.parquet
@@ -298,7 +299,7 @@ workflow POSTPROCESS {
     main:
     def lib_dict_ch
     if (params.library_dict) {
-        lib_dict_ch = Channel.fromPath(params.library_dict)
+        lib_dict_ch = Channel.fromPath(params.library_dict).first()
     } else {
         BUILD_LIBRARY_DICT()
         lib_dict_ch = BUILD_LIBRARY_DICT.out
@@ -329,7 +330,7 @@ workflow POSTPROCESS {
         def smiles_ch = Channel.from(
             params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
         )
-        ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
+        ADD_SMILES_LIB(normalized_ch.combine(smiles_ch).combine(lib_dict_ch))
         MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.smiles.collect(), ADD_SMILES_LIB.out.report.collect())
         DEDUPLICATE(MERGE_SMILES.out.normalized)
     } else {
