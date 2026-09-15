@@ -93,6 +93,14 @@ chmod +x build_and_push.sh
 
 CLI flags `--project`, `--region`, and `--tag` override the corresponding `.env` values. The script prints the full image URI on success.
 
+**DELi source selection.** The script stages the DELi source into `.deli-src/` for the Dockerfile (which `COPY`s it instead of cloning GitHub itself). By default it clones `Popov-Lab-UNC/DELi` at `DELI_REF` (`.env`, default `patch`). To build from a **local DELi clone** — e.g. to test an unreleased fix like the memory-bounded `streaming-collect` branch — pass `--deli-dir` (or set `DELI_LOCAL_DIR` in `.env`):
+
+```bash
+./build_and_push.sh --deli-dir ../DELi-streaming-fix --tag deli-streaming-test
+```
+
+Only the clone's **committed** state on its checked-out branch is staged (the script warns about uncommitted changes). The build log prints the staged DELi commit and whether the image carries the streaming collect module.
+
 ### 3. (Optional) Sanity-check GCP setup
 
 Before committing to a full pipeline run, run `pipeline/gcp_sanity_check.nf` to verify that the container image, GCS access, and required tools (Python deps, `deli`, `fastp`, postprocess scripts, system tools) all work on a real Cloud Batch VM. Each check runs as its own parallel Cloud Batch job and the run exits non-zero on the first failure with a clear message.
@@ -133,6 +141,35 @@ bash submit_gcp.sh \
 ```
 
 On a successful run, the work directory in GCS is automatically deleted; on failure it is preserved for debugging.
+
+### 5. (Optional) Small-file test runs
+
+`test_gcp.sh` runs the full pipeline on GCP with **small input files**, isolated from production outputs — useful for validating a DELi/DELIVER change (e.g. a locally built test image) end-to-end before a real campaign. Each invocation gets its own tag under `gs://$BUCKET/deliver-test/<tag>/` (inputs/work/results) plus a local `test_runs/<tag>/` dir with the launcher log, derived params, and execution trace.
+
+```bash
+bash test_gcp.sh                                     # reads from gcp_params.yml, chunk_size 250k
+bash test_gcp.sh --build                             # first build+push a test image from the
+                                                     #   local DELi clone (default ../DELi-streaming-fix,
+                                                     #   tag deli-streaming-test), then run with it
+bash test_gcp.sh --read-1 small_R1.fastq.gz --read-2 small_R2.fastq.gz   # local files are uploaded
+bash test_gcp.sh --resume                            # resume the previous test run
+```
+
+The default `--chunk-size 250000` makes even small files split into several decode chunks, so the multi-chunk collect path is exercised. On success the script lists the published results and prints the decode-stage rows (including `peak_rss`) from the execution trace; the work dir is deleted unless `--keep-work` is given, and always preserved on failure.
+
+### 6. Run the launcher from a VM (recommended for long runs)
+
+The Nextflow head job talks to Google APIs for the whole run — launched from a laptop, one dropped connection aborts the session (`ALREADY_EXISTS` / `DEADLINE_EXCEEDED` / `Read timed out`). `launch_vm.sh` puts the launcher on a small GCE VM inside Google's network, wrapped in tmux:
+
+```bash
+bash launch_vm.sh create                  # one-time: e2-medium VM + java/nextflow/tmux
+bash launch_vm.sh sync                    # copy the repo (incl. .env) — repeat after local edits
+bash launch_vm.sh run bash test_gcp.sh    # start the launcher inside tmux
+bash launch_vm.sh status | attach         # peek / interactive attach (Ctrl-b d to detach)
+bash launch_vm.sh stop                    # stopped VM costs only its disk
+```
+
+Docker builds still happen on your workstation (`--build` won't work on the VM — no Docker there): build/push first, then `sync` + `run`. The VM runs as `SERVICE_ACCOUNT` from `.env`; if job submission fails with an `actAs` permission error, the `create` step prints the one-time IAM binding to grant.
 
 ## Quick start — local Mac
 
@@ -175,9 +212,13 @@ The pipeline detects the mode automatically from `params.yml`:
 | `params.yml` | What runs |
 |--------------|-----------|
 | `read_1` set | FASTQ → preprocess → DELi → postprocessing |
+| `merged_fastq` set | pre-merged FASTQ → DELi → postprocessing (skips preprocess) |
 | `counts` set | counts.parquet → postprocessing only |
-| both set | error |
-| neither set | error |
+| any other combination | error (exactly one must be set) |
+
+`merged_fastq` is the recovery/re-decode entry point: point it at an
+already-merged FASTQ — e.g. a known-good `FASTP_MERGE` output sitting in an old
+work dir — to skip concat/fastp/fastqc entirely and go straight to decoding.
 
 Add `--resume` to resume after failure:
 
@@ -290,7 +331,9 @@ The only file you need to edit. All parameters are documented inline in `params.
 |-----------|-------------|
 | `read_1` | Read 1 sequencing file(s) — one or more lanes, `.fastq` or `.fastq.gz` |
 | `read_2` | Read 2 sequencing file(s) — paired-end only; omit for single-end |
+| `merged_fastq` | Single pre-merged FASTQ — set instead of `read_1` to skip preprocess and go straight to decoding (recovery/re-decode entry point) |
 | `counts` | Pre-computed counts parquet — set instead of `read_1` to skip decoding (see below) |
+| `spot` | GCP profiles only: use spot (preemptible) VMs for Batch tasks (default `true`). Set `false` (or `test_gcp.sh --spot false`) for recovery resumes — avoids preemption churn and the resume gap documented in `docs/nextflow-resume-retry-cache-issue.md`. |
 | `out_dir` | Directory where all results will be written |
 | `deli_data_dir` | Path to DELi data directory (library definitions, building blocks). Not required when `library_dict` is set. |
 | `library_dict` | Path to a pre-computed `library_dict.json`. When set, `BUILD_LIBRARY_DICT` is skipped and `deli_data_dir` is not needed. Useful in counts mode on a machine without DELi data. |

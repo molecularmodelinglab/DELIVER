@@ -11,7 +11,8 @@
  *
  * Input modes:
  * 1. FASTQ files (read_1, read_2) → preprocess → deli → postprocess
- * 2. Pre-counted parquet (counts.file) → postprocess only
+ * 2. Pre-merged FASTQ (merged_fastq) → deli → postprocess (skips preprocess)
+ * 3. Pre-counted parquet (counts.file) → postprocess only
  *
  * GCS Notes:
  * - Input paths from GCS: gs://bucket/path/file.fastq.gz
@@ -30,14 +31,14 @@ include { POSTPROCESS } from './subworkflows/postprocess.nf'
 
 
 workflow {
-    // Input validation
+    // Input validation — exactly one entry point must be set
     has_fastq  = params.read_1 as boolean
+    has_merged = params.merged_fastq as boolean
     has_counts = params.counts as boolean
 
-    if (has_fastq && has_counts) {
-        error("Provide either read_1 or counts, not both")
-    } else if (!has_fastq && !has_counts) {
-        error("Provide either read_1 (FASTQ input) or counts (counts parquet input)")
+    def n_modes = [has_fastq, has_merged, has_counts].count { it }
+    if (n_modes != 1) {
+        error("Provide exactly one of: read_1 (raw FASTQ input), merged_fastq (pre-merged FASTQ, skips preprocess), or counts (counts parquet input) — got ${n_modes}")
     }
 
     if (has_fastq) {
@@ -52,9 +53,27 @@ workflow {
 
         POSTPROCESS(DELI.out.counts)
 
+    } else if (has_merged) {
+        // ====================================================================
+        // Path 2: Pre-merged FASTQ → DELI → Postprocess (PREPROCESS skipped)
+        // ====================================================================
+        // Recovery/re-run entry point: feed an already-merged (or single-end
+        // already-decompressed) FASTQ straight into decoding — e.g. a
+        // FASTP_MERGE output stranded in an old work dir. Channel.fromPath
+        // preserves gs:// URIs (file() at workflow scope strips the scheme —
+        // see the same note in preprocess.nf).
+        merged_ch  = Channel.fromPath(params.merged_fastq)
+        merged_uri = merged_ch.map { it.toUriString() }
+        DELI(
+            merged_ch,   // path - for splitFastq
+            merged_uri   // val  - for YAML
+        )
+
+        POSTPROCESS(DELI.out.counts)
+
     } else if (has_counts) {
         // ====================================================================
-        // Path 2: Pre-counted parquet → Postprocess only
+        // Path 3: Pre-counted parquet → Postprocess only
         // ====================================================================
         if (!params.counts.format) {
             error("counts.format is required: set to \"deli\" or \"external\"")

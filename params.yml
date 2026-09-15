@@ -1,9 +1,10 @@
 # DELIVER pipeline parameters
 # This is the only file you need to edit before running the pipeline.
 #
-# The pipeline detects the run mode automatically:
-#   read_1 set → FASTQ input (preprocess → DELi → postprocessing)
-#   counts set → counts.parquet input (postprocessing only)
+# The pipeline detects the run mode automatically (set exactly one):
+#   read_1       set → FASTQ input (preprocess → DELi → postprocessing)
+#   merged_fastq set → pre-merged FASTQ (DELi → postprocessing; skips preprocess)
+#   counts       set → counts.parquet input (postprocessing only)
 #
 # Usage:
 #   sbatch submit.slurm --deliver-dir DIR --work-dir DIR --params-file FILE --log-dir DIR
@@ -22,6 +23,13 @@ read_1:
 read_2:
   - "/path/to/sample_L001_R2.fastq.gz"
   - "/path/to/sample_L002_R2.fastq.gz"
+
+# merged_fastq: single pre-merged FASTQ (.fastq or .fastq.gz) — skips PREPROCESS
+#         (concat/fastp/fastqc) and goes straight to decoding. Set instead of
+#         read_1/read_2/counts. Useful to re-decode without re-merging, or to
+#         recover a run whose merge output exists in an old work dir but is not
+#         reachable via -resume.
+# merged_fastq: "/path/to/merged.fastq.gz"
 
 # out_dir: directory where all results will be written
 out_dir: "/path/to/results"
@@ -114,7 +122,11 @@ demultiplexer_algorithm: "regex"
 # demultiplexer_mode: "single" (one library per read) or "library" (split by library tag)
 demultiplexer_mode: "single"
 
-# realign: whether to realign reads after initial barcode calling ("YES" / "NO")
+# realign: whether to realign reads after initial barcode calling ("YES" / "NO").
+#   "YES" keeps continuity with every run before 2026-09-02 (a string-truthiness
+#   bug had silently forced realign ON regardless of this setting). "NO" now
+#   genuinely disables it: faster decode, slightly fewer rescued reads —
+#   re-baseline before comparing against older results if you switch.
 realign: "NO"
 
 # wiggle: allow 1-base wiggle room when locating barcode sections ("YES" / "NO")

@@ -19,6 +19,15 @@ process GenerateDecodeYaml {
     def libs_py   = params.libraries instanceof List
         ? "[" + params.libraries.collect { "\"${it}\"" }.join(", ") + "]"
         : "[\"${params.libraries}\"]"
+    // YES/NO (or true/false) → Python boolean literals. DELi's DecodingSettings
+    // stores yaml values UNVALIDATED (plain dataclass), and Python treats any
+    // non-empty string — including 'NO' — as truthy: writing these as quoted
+    // strings silently forced realign/revcomp/wiggle ON in every run before
+    // 2026-09-02. Emit real booleans so NO actually means off.
+    def truthy     = ['YES', 'TRUE', 'Y', '1']
+    def revcomp_py = truthy.contains(params.revcomp.toString().toUpperCase()) ? 'True' : 'False'
+    def realign_py = truthy.contains(params.realign.toString().toUpperCase()) ? 'True' : 'False'
+    def wiggle_py  = truthy.contains(params.wiggle.toString().toUpperCase())  ? 'True' : 'False'
     """
     #!/usr/bin/env python
     import yaml
@@ -34,11 +43,11 @@ process GenerateDecodeYaml {
         'decode_settings': {
             'library_error_tolerance': ${params.library_error_tolerance},
             'min_library_overlap':     ${params.min_library_overlap},
-            'revcomp':                 '${params.revcomp}',
+            'revcomp':                 ${revcomp_py},
             'demultiplexer_algorithm': '${params.demultiplexer_algorithm}',
             'demultiplexer_mode':      '${params.demultiplexer_mode}',
-            'realign':                 '${params.realign}',
-            'wiggle':                  '${params.wiggle}',
+            'realign':                 ${realign_py},
+            'wiggle':                  ${wiggle_py},
         },
     }
 
@@ -89,6 +98,36 @@ process ExtractSequenceFiles {
     """
     echo stub > selection_id.txt
     echo /dev/null > files.txt
+    """
+}
+
+// ============================================================================
+// SPLIT — chunk the merged FASTQ on a WORKER, not on the head job
+// ============================================================================
+// Replaces the `splitFastq` operator. Operators execute inside the Nextflow head process, so the
+// old split ran single-threaded on the launcher machine, materialized every
+// chunk on its local disk before upload, and could not resume mid-split. As a
+// process, the split runs on a Batch worker sized in nextflow.config, seqkit
+// gzips chunks with -j threads (minutes instead of hours at billions of
+// reads), and a completed split is cached by -resume like any other task.
+process SPLIT {
+    tag "${merged_fastq.name}"
+
+    input:
+    path merged_fastq
+
+    output:
+    path "chunks/*.fastq.gz", emit: chunks
+
+    script:
+    """
+    seqkit split2 -s ${params.chunk_size} -j ${task.cpus} -e .gz -O chunks "${merged_fastq}"
+    """
+
+    stub:
+    """
+    mkdir -p chunks
+    cp "${merged_fastq}" chunks/stub.part_001.fastq.gz
     """
 }
 
@@ -398,7 +437,21 @@ workflow DELI {
 
     // CRITICAL FIX: Use the FASTQ Path from the input channel, NOT from files.txt
     // The files.txt contains GCS paths which won't stage properly in downstream tasks
-    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
+    //
+    // PREVIOUS approach — the splitFastq OPERATOR (kept for reference):
+    //   fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
+    // Operators run inside the HEAD JOB: the whole merged FASTQ was
+    // decompressed, chunked, and re-gzipped single-threaded on the launcher
+    // machine (hours at billions of reads), chunk files filled its local disk
+    // before upload (50 GB on the e2-medium launcher VM), and an interrupted
+    // split could not resume — it re-split from read #1. See the SPLIT
+    // process above for the worker-side replacement. Chunk contents are
+    // identical; only the producer (worker vs head job) and the chunk file
+    // names (*.part_NNN.fastq.gz) changed — DecodeChunk output naming uses
+    // task.index, so downstream is unaffected. NOTE: switching between the
+    // two invalidates decode-and-downstream resume caches (different chunk
+    // files → different task hashes) — change only between campaigns.
+    fastq_chunks = SPLIT(fastq_files).chunks.flatten()
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
 

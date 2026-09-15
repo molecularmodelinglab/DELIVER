@@ -42,6 +42,7 @@ if [[ "${RUN_NF}" == true ]]; then
     module load nextflow 2>/dev/null || true
     run "Nextflow stub — FASTQ path"   bash "${DELIVER_DIR}/test_stub.sh"
     run "Nextflow stub — counts path"  bash "${DELIVER_DIR}/test_stub.sh" --counts
+    run "Nextflow stub — merged path"  bash "${DELIVER_DIR}/test_stub.sh" --merged
 fi
 
 # ---------------------------------------------------------------------------

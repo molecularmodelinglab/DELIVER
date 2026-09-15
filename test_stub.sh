@@ -5,6 +5,7 @@
 # Usage:
 #   bash test_stub.sh                  # test FASTQ path (default)
 #   bash test_stub.sh --counts         # test counts path
+#   bash test_stub.sh --merged         # test pre-merged FASTQ path
 
 set -euo pipefail
 
@@ -18,6 +19,8 @@ OUT_DIR="${DELIVER_DIR}/.stub_out"
 MODE="fastq"
 if [[ "${1:-}" == "--counts" ]]; then
     MODE="counts"
+elif [[ "${1:-}" == "--merged" ]]; then
+    MODE="merged"
 fi
 
 # ---------------------------------------------------------------------------
@@ -43,6 +46,32 @@ if [[ "${MODE}" == "fastq" ]]; then
 read_1:
   - "${STUB_FASTQ}"
 counts: null
+out_dir: "${OUT_DIR}"
+deli_data_dir: "${STUB_DIR}"
+selection_id:         "stub"
+target_id:            "stub"
+selection_condition:  "-"
+date_ran:             "2024-01-01"
+additional_info:      ""
+libraries:
+  - "L01"
+library_error_tolerance:  2
+min_library_overlap:      8
+revcomp:                  "YES"
+demultiplexer_algorithm:  "regex"
+demultiplexer_mode:       "single"
+realign:                  "NO"
+wiggle:                   "YES"
+chunk_size: 1000000
+prefix:     ""
+debug:      false
+fastp_threads: 4
+EOF
+elif [[ "${MODE}" == "merged" ]]; then
+    cat > "${PARAMS_FILE}" <<EOF
+read_1: null
+counts: null
+merged_fastq: "${STUB_FASTQ}"
 out_dir: "${OUT_DIR}"
 deli_data_dir: "${STUB_DIR}"
 selection_id:         "stub"
@@ -96,7 +125,10 @@ fi
 # ---------------------------------------------------------------------------
 # Load Nextflow and run
 # ---------------------------------------------------------------------------
-module load nextflow
+# `module` only exists on the HPC; locally nextflow is expected on PATH.
+if ! command -v nextflow &>/dev/null; then
+    module load nextflow
+fi
 
 echo "Running stub test (mode: ${MODE})..."
 nextflow run "${DELIVER_DIR}/pipeline/main.nf" \
