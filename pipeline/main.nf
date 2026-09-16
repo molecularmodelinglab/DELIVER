@@ -43,6 +43,7 @@ workflow {
     if (has_fastq) {
 
         PREPROCESS()
+
         fastq_uri = PREPROCESS.out.fastq.map { it.toUriString() }
         DELI(
             PREPROCESS.out.fastq,  // path - for splitFastq
