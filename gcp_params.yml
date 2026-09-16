@@ -17,6 +17,9 @@ read_2:
   - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz
   - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz
 
+# counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
+#         Set instead of read_1/read_2. See params.yml for full format documentation.
+counts: null
 
 
 # read_1:

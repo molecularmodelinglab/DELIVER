@@ -309,6 +309,41 @@ process FASTP_QC {
 
 
 // ============================================================================
+// FASTP_QC PROCESS
+// ============================================================================
+// Runs fastp in QC-only mode (no merging, output reads discarded).
+// Used on the single-end path where FASTP_MERGE does not run.
+
+process FASTP_QC {
+    publishDir "${params.out_dir}/qc", mode: 'copy'
+
+    input:
+    path r1
+
+    output:
+    path "fastp_qc.html", emit: html
+    path "fastp_qc.json", emit: json
+
+    script:
+    def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
+    """
+    ln -s ${r1} input_R1.${r1_ext}
+    fastp \
+        --in1 input_R1.${r1_ext} \
+        -o /dev/null \
+        -h fastp_qc.html \
+        -j fastp_qc.json \
+        -w ${params.fastp_threads}
+    """
+
+    stub:
+    """
+    touch fastp_qc.html fastp_qc.json
+    """
+}
+
+
+// ============================================================================
 // PREPROCESS WORKFLOW
 // ============================================================================
 
