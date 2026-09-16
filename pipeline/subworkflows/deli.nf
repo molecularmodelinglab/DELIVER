@@ -102,10 +102,10 @@ process DecodeChunk {
     val deli_args
 
     output:
-    path "${prefix}_${fastq_chunk.simpleName}_decoded.tsv", emit: decoded_tsv
-    path "${prefix}_${fastq_chunk.simpleName}_decode_statistics.json", emit: decode_stats
-    path "${prefix}_${fastq_chunk.simpleName}_deli.log", emit: deli_log
-    path "${prefix}_${fastq_chunk.simpleName}_failed_decoding.tsv", emit: failed_tsv, optional: true
+    path "${prefix}_${task.index}_decoded.tsv", emit: decoded_tsv
+    path "${prefix}_${task.index}_decode_statistics.json", emit: decode_stats
+    path "${prefix}_${task.index}_deli.log", emit: deli_log
+    path "${prefix}_${task.index}_failed_decoding.tsv", emit: failed_tsv, optional: true
 
     script:
     def fastq_info_flag  = params.save_fastq_info ? "--save-fastq-info" : ""
@@ -115,19 +115,19 @@ process DecodeChunk {
         "${selection_file}" \
         "${fastq_chunk}" \
         --out-dir ./ \
-        --prefix "${prefix}_${fastq_chunk.simpleName}" \
+        --prefix "${prefix}_${task.index}" \
         --skip-report \
         ${fastq_info_flag} \
         ${save_failed_flag}
 
-    mv deli.log ${prefix}_${fastq_chunk.simpleName}_deli.log
+    mv deli.log ${prefix}_${task.index}_deli.log
     """
 
     stub:
     """
-    touch ${prefix}_${fastq_chunk.simpleName}_decoded.tsv
-    echo '{}' > ${prefix}_${fastq_chunk.simpleName}_decode_statistics.json
-    touch ${prefix}_${fastq_chunk.simpleName}_deli.log
+    touch ${prefix}_${task.index}_decoded.tsv
+    echo '{}' > ${prefix}_${task.index}_decode_statistics.json
+    touch ${prefix}_${task.index}_deli.log
     """
 }
 
@@ -159,7 +159,7 @@ process MergeDecodeStatistics {
 
 process CollectDecodeChunks {
     input:
-    path("*_decoded.tsv", arity: '1..*')
+    path decoded_files
     val prefix
     val deli_args
 
@@ -167,6 +167,9 @@ process CollectDecodeChunks {
     path "${prefix}_collected.ndjson", emit: ndjson
 
     script:
+    // NOTE: DELi's `decode collect --compress` is present in the CLI but hard-disabled
+    // in this installed version (polars sink_ndjson doesn't support compression yet —
+    // it exits 1 if passed), so this output stays uncompressed until that's fixed upstream.
     """
     deli ${deli_args} decode collect \
         *_decoded.tsv \
@@ -334,7 +337,7 @@ process MergeDebugFailed {
     publishDir "${params.out_dir}/debug", mode: 'copy'
 
     input:
-    path("*_failed_decoding.tsv", arity: '1..*')
+    path failed_files
     val prefix
 
     output:
@@ -395,7 +398,7 @@ workflow DELI {
 
     // CRITICAL FIX: Use the FASTQ Path from the input channel, NOT from files.txt
     // The files.txt contains GCS paths which won't stage properly in downstream tasks
-    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true)
+    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
 
@@ -430,7 +433,7 @@ workflow DELI {
     )
 
     count_chunks = collected_decodes.ndjson
-        .splitText(by: 500_000, file: true)
+        .splitText(by: 500_000, file: true, compress: true)
 
     counts = CountChunk(
         count_chunks,

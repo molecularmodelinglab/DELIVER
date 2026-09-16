@@ -7,6 +7,7 @@
  * Handles:
  * - Input file resolution (GCS or local)
  * - Concatenation of multiple R1/R2 files
+ * - QC reporting on raw R1(+R2) reads (FastQC)
  * - Paired-end merging (fastp) or single-end decompression
  * - Output: uncompressed .fastq ready for DELI
  *
@@ -67,21 +68,25 @@ process CONCAT {
         echo "Concatenating gzipped files -> ${read_type}.fastq.gz"
         cat ${files} > ${read_type}.fastq.gz
     else
-        # Mixed / uncompressed / ORA: decompress per file type into one FASTQ.
-        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq"
-        : > ${read_type}.fastq
+        # Mixed / uncompressed / ORA: decompress per file type, always emit
+        # .fastq.gz — concatenated gzip members form one valid gzip stream
+        # (same trick as the fast path above), so already-gzipped sources are
+        # appended as-is and only non-gz sources are piped through gzip.
+        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq.gz"
+        : > ${read_type}.fastq.gz
         for f in ${files}; do
             case "\$f" in
                 *.ora)
-                    # Illumina ORA (DRAGEN). -c: to stdout, --raw: uncompressed FASTQ.
-                    # If your orad build uses different flags, change them here only.
-                    orad -c --raw -t ${task.cpus} "\$f" >> ${read_type}.fastq
+                    # Illumina ORA (DRAGEN). -c: to stdout. Omitting --raw makes
+                    # orad decompress natively to gzip (its default format) instead
+                    # of writing raw FASTQ through a separate gzip process.
+                    orad -c -t ${task.cpus} "\$f" >> ${read_type}.fastq.gz
                     ;;
                 *.gz)
-                    zcat "\$f" >> ${read_type}.fastq
+                    cat "\$f" >> ${read_type}.fastq.gz
                     ;;
                 *)
-                    cat "\$f" >> ${read_type}.fastq
+                    gzip -c "\$f" >> ${read_type}.fastq.gz
                     ;;
             esac
         done
@@ -144,16 +149,16 @@ process DECOMPRESS {
 
 
 process FASTP_MERGE {
-    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq' ? null : fn }
+    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq.gz' ? null : fn }
 
     input:
     path r1
     path r2
 
     output:
-    path "merged.fastq", emit: fastq
-    path "fastp.html",   emit: html
-    path "fastp.json",   emit: json
+    path "merged.fastq.gz", emit: fastq
+    path "fastp.html",      emit: html
+    path "fastp.json",      emit: json
 
     script:
     def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
@@ -166,11 +171,13 @@ process FASTP_MERGE {
     # ~400M-read run that decompresses both inputs an extra time end-to-end
     # (a large, avoidable I/O pass just for a log line). fastp already reports
     # before/after read counts in fastp.json.
+    # merged_out ends in .gz so fastp gzip-compresses the merged output itself
+    # (multi-threaded, using the same -w workers) instead of writing raw FASTQ.
     fastp \
         --in1 input_R1.${r1_ext} \
         --in2 input_R2.${r2_ext} \
         -m \
-        --merged_out merged.fastq \
+        --merged_out merged.fastq.gz \
         --correction \
         -w ${params.fastp_threads} \
         -h fastp.html \
@@ -178,11 +185,12 @@ process FASTP_MERGE {
 
     echo "fastp merge complete — read counts available in fastp.json"
     """
-    
+
 
     stub:
     """
-    touch merged.fastq fastp.html fastp.json
+    printf '@stub_read1\\nACGTACGT\\n+\\nIIIIIIII\\n' | gzip -c > merged.fastq.gz
+    touch fastp.html fastp.json
     """
 }
 
@@ -274,36 +282,48 @@ process ORA_DIAGNOSTICS {
 
 
 // ============================================================================
-// FASTP_QC PROCESS
+// FASTQC PROCESS
 // ============================================================================
-// Runs fastp in QC-only mode (no merging, output reads discarded).
-// Used on the single-end path where FASTP_MERGE does not run.
+// Runs FastQC on the raw (per-lane-concatenated, pre-merge) reads to report
+// on sequencing data quality: per-base quality, GC content, adapter content,
+// duplication levels, overrepresented sequences, etc.
+// Called with R1 only on the single-end path, and R1+R2 together (one task,
+// one FastQC invocation) on the paired-end path.
 
-process FASTP_QC {
+process FASTQC {
+    tag "fastqc"
     publishDir "${params.out_dir}/qc", mode: 'copy'
 
     input:
-    path r1
+    path reads
+    // reads: R1 fastq/fastq.gz (single-end) or R1 + R2 (paired-end), as
+    // produced by CONCAT — FastQC accepts one or many files per invocation.
 
     output:
-    path "fastp_qc.html", emit: html
-    path "fastp_qc.json", emit: json
+    path "*_fastqc.html", emit: html
+    path "*_fastqc.zip",  emit: zip
 
     script:
-    def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
+    // Prefix inputs with selection_id via symlink (rather than passing raw
+    // files) so FastQC's output naming carries the selection through, e.g.
+    // R1.fastq.gz -> ${params.selection_id}_R1_fastqc.html — this keeps
+    // reports unambiguous when aggregating across multiple runs (MultiQC).
     """
-    ln -s ${r1} input_R1.${r1_ext}
-    fastp \
-        --in1 input_R1.${r1_ext} \
-        -o /dev/null \
-        -h fastp_qc.html \
-        -j fastp_qc.json \
-        -w ${params.fastp_threads}
+    renamed=""
+    for f in ${reads}; do
+        link="${params.selection_id}_\$f"
+        ln -s "\$f" "\$link"
+        renamed="\$renamed \$link"
+    done
+    fastqc --threads ${params.fastqc_threads} \$renamed
     """
 
     stub:
     """
-    touch fastp_qc.html fastp_qc.json
+    for f in ${reads}; do
+        base=\$(basename "\$f" | sed -E 's/\\.(fastq|fq)(\\.gz)?\$//')
+        touch "${params.selection_id}_\${base}_fastqc.html" "${params.selection_id}_\${base}_fastqc.zip"
+    done
     """
 }
 
@@ -387,7 +407,10 @@ workflow PREPROCESS {
         
         r1_fastq = concat_out.fastq.filter { it[0] == "R1" }.map { it[1] }
         r2_fastq = concat_out.fastq.filter { it[0] == "R2" }.map { it[1] }
-        
+
+        // FastQC on the raw R1 + R2 reads (pre-merge) — one task, both files.
+        FASTQC(r1_fastq.mix(r2_fastq).collect())
+
         fastq_out = FASTP_MERGE(r1_fastq, r2_fastq).fastq
 
         // Logging — done after channel ops so paths are still URI strings
@@ -414,7 +437,7 @@ workflow PREPROCESS {
         // --- production single-end flow (DISABLED during diagnostics; restore for final) ---
         reads_ch = r1_files.map { files -> tuple("R1", files) }
         concat_out = CONCAT(reads_ch)
-        FASTP_QC(concat_out.fastq.map { it[1] })
+        FASTQC(concat_out.fastq.map { it[1] })
         fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
 
         def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"

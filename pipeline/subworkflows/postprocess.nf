@@ -143,12 +143,14 @@ process ADD_SMILES_LIB {
     tuple path(normalized_parquet), val(lib_id), val(smiles_path)
 
     output:
-    path "${lib_id}_with_smiles.parquet"
+    path "${lib_id}_with_smiles.parquet", emit: smiles
+    path "${lib_id}_smiles_report.parquet", emit: report
 
     script:
     def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
+    def max_missing  = params.smiles.max_missing_fraction ?: 0.01
     """
     echo '${smiles_map}' > smiles_map.json
     python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
@@ -157,12 +159,15 @@ process ADD_SMILES_LIB {
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
         --library      ${lib_id} \
-        --output       ${lib_id}_with_smiles.parquet
+        --max-missing-fraction ${max_missing} \
+        --output       ${lib_id}_with_smiles.parquet \
+        --report       ${lib_id}_smiles_report.parquet
     """
 
     stub:
     """
     touch ${lib_id}_with_smiles.parquet
+    touch ${lib_id}_smiles_report.parquet
     """
 }
 
@@ -172,23 +177,28 @@ process MERGE_SMILES {
     input:
     path normalized_parquet
     path partials
+    path reports
 
     output:
-    path "normalized.parquet"
+    path "normalized.parquet", emit: normalized
+    path "smiles_report.tsv", emit: report
 
     script:
     def smiles_col = params.smiles.smiles_col ?: "SMILES"
     """
     python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
-        --input      ${normalized_parquet} \
-        --partials   ${partials} \
-        --smiles-col ${smiles_col} \
-        --output     normalized.parquet
+        --input         ${normalized_parquet} \
+        --partials      ${partials} \
+        --reports       ${reports} \
+        --smiles-col    ${smiles_col} \
+        --output        normalized.parquet \
+        --report-output smiles_report.tsv
     """
 
     stub:
     """
     cp ${normalized_parquet} normalized.parquet
+    touch smiles_report.tsv
     """
 }
 
@@ -320,8 +330,8 @@ workflow POSTPROCESS {
             params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
         )
         ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
-        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.collect())
-        DEDUPLICATE(MERGE_SMILES.out)
+        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.smiles.collect(), ADD_SMILES_LIB.out.report.collect())
+        DEDUPLICATE(MERGE_SMILES.out.normalized)
     } else {
         DEDUPLICATE(normalized_ch)
     }
