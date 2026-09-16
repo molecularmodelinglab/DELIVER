@@ -173,12 +173,15 @@ process FASTP_MERGE {
     # before/after read counts in fastp.json.
     # merged_out ends in .gz so fastp gzip-compresses the merged output itself
     # (multi-threaded, using the same -w workers) instead of writing raw FASTQ.
+    # Quality filtering removes low-quality reads (default: 95% >= Q30).
     fastp \
         --in1 input_R1.${r1_ext} \
         --in2 input_R2.${r2_ext} \
         -m \
         --merged_out merged.fastq.gz \
         --correction \
+        --qualified_quality_phred 30 \
+        --unqualified_percent_limit 5 \
         -w ${params.fastp_threads} \
         -h fastp.html \
         -j fastp.json
