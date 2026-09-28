@@ -305,16 +305,17 @@ class TestAddSmiles:
         add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
         assert len(pl.read_parquet(out)) == len(pl.read_parquet(inp))
 
-    def test_missing_smiles_raises_error(self, tmp_path):
+    def test_cli_missing_smiles_above_threshold_does_not_fail(self, tmp_path):
         inp = self._make_input(tmp_path)
-        # Only one of the two L01 compounds has a SMILES entry
+        # Only one of the two L01 compounds has a SMILES entry (50% missing)
         smiles_file = self._make_smiles_file(tmp_path, "L01",
             [("L01-1-1", "CCO")])
         smiles_map = tmp_path / "map.json"
         smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
         out = tmp_path / "out.parquet"
-        with pytest.raises(ValueError, match="L01"):
-            add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] is None
 
     def test_library_flag_restricts_to_one_library(self, tmp_path):
         inp = self._make_input(tmp_path)
@@ -345,19 +346,22 @@ class TestAddSmiles:
         assert row["n_corrupted"] == 0
         assert row["missing_fraction"] == pytest.approx(0.005)
 
-    def test_above_threshold_raises_below_threshold_does_not(self, tmp_path):
+    def test_above_threshold_warns_but_does_not_raise(self, tmp_path, capsys):
         # 2/10 = 20% missing
         df = pl.DataFrame({
             "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
             "library_id":  ["L01"] * 10,
         })
         smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(8)])
-        result, _ = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", max_missing_fraction=0.25)
+        add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", warn_missing_fraction=0.25)
+        assert "ABOVE" not in capsys.readouterr().err
+        result, report = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", warn_missing_fraction=0.01)
         assert len(result) == 10
-        with pytest.raises(ValueError, match="L01"):
-            add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", max_missing_fraction=0.01)
+        assert result.filter(pl.col("compound_id").str.contains("MISS"))["SMILES"].is_null().all()
+        assert report["missing_fraction"][0] == pytest.approx(0.2)
+        assert "ABOVE the 1.00% warn threshold" in capsys.readouterr().err
 
-    def test_cli_max_missing_fraction_flag(self, tmp_path):
+    def test_cli_warn_missing_fraction_flag(self, tmp_path):
         inp_df = pl.DataFrame({
             "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
             "library_id":  ["L01"] * 10,
@@ -369,7 +373,7 @@ class TestAddSmiles:
         smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
         out = tmp_path / "out.parquet"
         add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
-                    "--max-missing-fraction", "0.25", "--output", str(out)])
+                    "--warn-missing-fraction", "0.25", "--output", str(out)])
         assert len(pl.read_parquet(out)) == 10
 
     def test_cli_writes_report_when_requested(self, tmp_path):
