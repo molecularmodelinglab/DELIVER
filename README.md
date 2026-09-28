@@ -437,9 +437,17 @@ Defaults work for most cases. See [DELi docs](https://github.com/Popov-Lab-UNC/D
 | `revcomp` | `YES` | Reverse-complement reads before decoding |
 | `demultiplexer_algorithm` | `regex` | Barcode finding algorithm (`regex` or `cutadapt`) |
 | `demultiplexer_mode` | `single` | `single` — one library per read; `library` — split by library tag |
-| `realign` | `NO` | Realign reads after initial barcode calling |
+| `realign` | `NO` | Realign reads after initial barcode calling (full dynamic re-alignment: rescues indel reads, slower decode) |
 | `wiggle` | `YES` | Allow 1-base wiggle when locating barcode sections |
 | `chunk_size` | `1000000` | Reads per FASTQ chunk (controls parallelism) |
+
+`revcomp`, `realign` and `wiggle` are on/off switches written as `"YES"` / `"NO"`
+(case-insensitive; `TRUE`/`Y`/`1` also mean on). Before 2026-09-02 the yaml
+generator passed them to DELi as quoted strings, and a non-empty string is truthy
+in Python — so `realign` was effectively **ON** in every earlier run regardless
+of this setting. All historical results are realign-on baselines; `realign: "NO"`
+now genuinely disables it, so re-baseline before comparing against older runs.
+See [docs/decode-settings-boolean-fix.md](docs/decode-settings-boolean-fix.md).
 
 ## How the pipeline runs on Longleaf
 

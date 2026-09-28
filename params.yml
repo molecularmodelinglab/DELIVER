@@ -166,10 +166,13 @@ save_failed: false
 # carried through to singletons.parquet. Disynthons are not affected.
 # compound_col - column name for compound ID in your SMILES files
 # smiles_col   - column name for SMILES in your SMILES files
+# on_missing   - compounds absent from the SMILES file: "fail" (default),
+#                "null" (keep row, null SMILES), or "drop" (remove row)
 # files        - mapping of library_id to sorted enumerated parquet file
 # smiles:
 #   compound_col: compound
 #   smiles_col: SMILES
+#   on_missing: "fail"
 #   files:
 #     L01: /path/to/L01_enumerated.parquet
 #     L04: /path/to/L04_enumerated.parquet

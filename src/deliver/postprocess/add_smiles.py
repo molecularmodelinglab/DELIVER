@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import duckdb
@@ -16,11 +17,14 @@ def add_smiles(
     compound_col: str,
     smiles_col: str,
     library: str | None = None,
+    on_missing: str = "fail",
 ) -> pl.DataFrame:
     """Add SMILES column by DuckDB lookup from per-library sorted parquet files.
 
     If library is given, process only that library (used for parallel execution).
-    Raises ValueError if any compound in a covered library has no SMILES match.
+    on_missing controls compounds with no SMILES match: "fail" raises ValueError,
+    "null" keeps the row with a null SMILES, "drop" removes the row. Corrupted
+    (null-byte) SMILES always raise — that is file damage, not a coverage gap.
     """
     if library is not None:
         smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
@@ -43,15 +47,29 @@ def add_smiles(
             """).arrow()
         )
         joined = df_lib.join(smiles_df, on="compound_id", how="left")
-        missing = joined.filter(pl.col(smiles_col).is_null())["compound_id"].to_list()
         corrupted = joined.filter(pl.col(smiles_col).str.contains("\x00"))["compound_id"].to_list()
-        bad = missing + corrupted
-        if bad:
+        if corrupted:
             raise ValueError(
-                f"Library {lib_id}: {len(bad)} compound(s) have missing or corrupted SMILES "
-                f"({len(missing)} null, {len(corrupted)} null-byte): "
-                f"{bad[:5]}{'...' if len(bad) > 5 else ''}"
+                f"Library {lib_id}: {len(corrupted)} compound(s) have corrupted (null-byte) "
+                f"SMILES: {corrupted[:5]}{'...' if len(corrupted) > 5 else ''}"
             )
+        missing = joined.filter(pl.col(smiles_col).is_null())["compound_id"].to_list()
+        if missing:
+            if on_missing == "fail":
+                raise ValueError(
+                    f"Library {lib_id}: {len(missing)} compound(s) have missing or corrupted SMILES "
+                    f"({len(missing)} null, 0 null-byte): "
+                    f"{missing[:5]}{'...' if len(missing) > 5 else ''} "
+                    f"— rerun with --on-missing null|drop to tolerate enumeration gaps"
+                )
+            print(
+                f"WARNING: library {lib_id}: {len(missing)} compound(s) not in the SMILES "
+                f"file ({'kept with null SMILES' if on_missing == 'null' else 'dropped'}): "
+                f"{missing[:5]}{'...' if len(missing) > 5 else ''}",
+                file=sys.stderr,
+            )
+            if on_missing == "drop":
+                joined = joined.filter(pl.col(smiles_col).is_not_null())
         results.append(joined)
 
     uncovered = df.filter(~pl.col(LIBRARY_ID).is_in(covered_libs))
@@ -68,6 +86,8 @@ def main(args=None):
     parser.add_argument("--compound-col", default="compound", help="Compound ID column in SMILES files (default: compound)")
     parser.add_argument("--smiles-col",   default="SMILES",   help="SMILES column name (default: SMILES)")
     parser.add_argument("--library",      default=None,   help="Process only this library ID (for parallel execution)")
+    parser.add_argument("--on-missing",   default="fail", choices=["fail", "null", "drop"],
+                        help="Compounds absent from the SMILES file: fail (default), keep with null SMILES, or drop")
     parser.add_argument("--output",       required=True,  help="Output parquet file")
     parsed = parser.parse_args(args)
 
@@ -75,7 +95,9 @@ def main(args=None):
         smiles_files = json.load(f)
 
     df = pl.read_parquet(parsed.input)
-    add_smiles(df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library).write_parquet(parsed.output)
+    add_smiles(
+        df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.on_missing
+    ).write_parquet(parsed.output)
 
 
 if __name__ == "__main__":

@@ -140,15 +140,19 @@ process ADD_SMILES_LIB {
     tag "${lib_id}"
 
     input:
-    tuple path(normalized_parquet), val(lib_id), val(smiles_path)
+    // smiles_file must be path (not val): Nextflow stages gs:// files into the
+    // task with real GCS credentials. DuckDB inside the container has none, so
+    // handing it the raw gs:// URI fails with HTTP 403 on any private bucket.
+    tuple path(normalized_parquet), val(lib_id), path(smiles_file)
 
     output:
     path "${lib_id}_with_smiles.parquet"
 
     script:
-    def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
+    def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_file.name])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
+    def on_missing   = params.smiles.on_missing   ?: "fail"
     """
     echo '${smiles_map}' > smiles_map.json
     python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
@@ -157,6 +161,7 @@ process ADD_SMILES_LIB {
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
         --library      ${lib_id} \
+        --on-missing   ${on_missing} \
         --output       ${lib_id}_with_smiles.parquet
     """
 
@@ -317,7 +322,7 @@ workflow POSTPROCESS {
     def has_embedded_smiles = params.counts?.format == "external" && params.counts?.smiles_col
     if (params.smiles && !has_embedded_smiles) {
         def smiles_ch = Channel.from(
-            params.smiles.files.collect { lib_id, smiles_path -> [lib_id, smiles_path] }
+            params.smiles.files.collect { lib_id, smiles_path -> [lib_id, file(smiles_path)] }
         )
         ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
         MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.collect())

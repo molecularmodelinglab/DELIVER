@@ -27,12 +27,12 @@
 #   - gs://aircheck-internal/DELIVER/raw_data_WDR91/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.fastq.gz
 
 read_1:
-  - "gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_WDR91/SGCDEL_Camp1_WDR91_S101_L007_R1_001.fastq.ora"
-  - "gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_WDR91/SGCDEL_Camp1_WDR91_S101_L008_R1_001.fastq.ora"
+  - "gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L004_R1_001.fastq.ora"
+  - "gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L005_R1_001.fastq.ora"
 
 read_2:
-  - gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_WDR91/SGCDEL_Camp1_WDR91_S101_L007_R2_001.fastq.ora
-  - gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_WDR91/SGCDEL_Camp1_WDR91_S101_L008_R2_001.fastq.ora
+  - gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L004_R2_001.fastq.ora
+  - gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L005_R2_001.fastq.ora
 
 # read_1:
 #   - "gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_PARP14A_P223843/SGCDEL_Camp1_PARP14A_P223843_S97_L007_R1_001.fastq.ora"
@@ -67,7 +67,7 @@ read_2:
 merged_fastq: null
 
 # out_dir: directory where all results will be written
-out_dir: gs://deliver-process/temp-processed-files-updated_Aug25
+out_dir: gs://deliver-process/temp-processed-files-updated_Sep17
 
 # counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
 #         Set instead of read_1/read_2. See params.yml for full format documentation.
@@ -93,10 +93,10 @@ library_dict: null
 # SELECTION METADATA
 # -----------------------------------------------------------------------
 
-selection_id: "SGCDEL_Camp1_WDR91_selection"
+selection_id: "SGCDEL_Camp2_FDPS_P223697_S145_selection"
 
 # target_id: name of the target protein
-target_id: "SGCDEL_Camp1_WDR91"
+target_id: "FDPS_P223697_S145"
 
 # selection_condition: free-text description of selection conditions (e.g. "10nM", "-")
 selection_condition: "-"
@@ -203,7 +203,29 @@ save_failed: false
 #   files:
 #     L01: gs://your-bucket/smiles/L01_enumerated.parquet
 
-smiles: null
+smiles:
+  compound_col: compound
+  smiles_col: SMILES
+  # on_missing: decoded compounds with no row in the enumerated parquet.
+  #   "fail" — abort (default); "null" — keep the row, SMILES stays null;
+  #   "drop" — remove the row.
+  #   Needed here: the Vernalis enumeration excludes 5 building blocks that the
+  #   library definitions still carry (SGC-DEL0011 cycle A id 59 and cycle C ids
+  #   1862-1865), so their decoded compounds have no SMILES to look up.
+  #   Revert to "fail" once the enumeration files are regenerated.
+  on_missing: "null"
+  files:
+    SGC-DEL0001: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0001_Fully_Enumerated_Structures.parquet
+    SGC-DEL0002: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0002_Fully_Enumerated_Structures.parquet
+    SGC-DEL0003: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0003_Fully_Enumerated_Structures.parquet
+    SGC-DEL0004: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0004_Fully_Enumerated_Structures.parquet
+    SGC-DEL0005: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0005_Fully_Enumerated_Structures.parquet
+    SGC-DEL0006: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0006_Fully_Enumerated_Structures.parquet
+    SGC-DEL0007: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0007_Fully_Enumerated_Structures.parquet
+    SGC-DEL0008: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0008_Fully_Enumerated_Structures.parquet
+    SGC-DEL0009: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0009_Fully_Enumerated_Structures.parquet
+    SGC-DEL0010: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0010_Fully_Enumerated_Structures.parquet
+    SGC-DEL0011: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0011_Fully_Enumerated_Structures.parquet
 
 # on_duplicate_compound_id: what to do when the same compound_id appears more than once.
 #   "fail" — abort with an error (default; catches unexpected duplicates)
