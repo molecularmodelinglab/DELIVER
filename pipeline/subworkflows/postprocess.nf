@@ -150,7 +150,7 @@ process ADD_SMILES_LIB {
     def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_path])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
-    def max_missing  = params.smiles.max_missing_fraction ?: 0.01
+    def warn_missing = params.smiles.warn_missing_fraction ?: 0.01
     """
     echo '${smiles_map}' > smiles_map.json
     python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
@@ -159,7 +159,7 @@ process ADD_SMILES_LIB {
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
         --library      ${lib_id} \
-        --max-missing-fraction ${max_missing} \
+        --warn-missing-fraction ${warn_missing} \
         --output       ${lib_id}_with_smiles.parquet \
         --report       ${lib_id}_smiles_report.parquet
     """

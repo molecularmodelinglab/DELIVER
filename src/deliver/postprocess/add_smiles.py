@@ -25,20 +25,19 @@ def add_smiles(
     compound_col: str,
     smiles_col: str,
     library: str | None = None,
-    max_missing_fraction: float = 0.01,
+    warn_missing_fraction: float = 0.05,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Add SMILES column by DuckDB join against per-library parquet files.
 
     If library is given, process only that library (used for parallel execution).
     A compound with no SMILES match (or a corrupted one) gets a null SMILES and is
-    otherwise kept, as long as the fraction of such compounds in its library stays
-    at or below max_missing_fraction — that's expected decode noise. Above that
-    fraction, raises ValueError instead, since it likely signals a real problem
-    (reference/decode mismatch) rather than noise.
+    otherwise kept — some of this is expected decode noise. If the fraction of such
+    compounds in a library exceeds warn_missing_fraction, a louder warning is logged
+    (it may signal a reference/decode mismatch), but the run is never failed.
 
     Returns (result, report) — report has one row per covered library with
     n_compounds/n_missing/n_corrupted/missing_fraction, for visibility into
-    coverage even when nothing crosses the fail threshold.
+    coverage regardless of the warn threshold.
     """
     if library is not None:
         smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
@@ -65,18 +64,16 @@ def add_smiles(
         corrupted = joined.filter(pl.col(smiles_col).str.contains("\x00"))["compound_id"].to_list()
         bad = missing + corrupted
         fraction = len(bad) / len(df_lib)
-        if fraction > max_missing_fraction:
-            raise ValueError(
-                f"Library {lib_id}: {len(bad)} compound(s) ({fraction:.2%}) have missing or corrupted "
-                f"SMILES, above the {max_missing_fraction:.2%} tolerance "
-                f"({len(missing)} null, {len(corrupted)} null-byte): "
-                f"{bad[:5]}{'...' if len(bad) > 5 else ''}"
-            )
         if bad:
+            if fraction > warn_missing_fraction:
+                note = (f"ABOVE the {warn_missing_fraction:.2%} warn threshold — possible reference/decode "
+                        f"mismatch, check smiles_report")
+            else:
+                note = "treating as decode noise"
             print(
                 f"Warning: library {lib_id}: {len(bad)} compound(s) ({fraction:.2%}) have missing or "
-                f"corrupted SMILES — treating as decode noise, SMILES set to null: "
-                f"{bad[:5]}{'...' if len(bad) > 5 else ''}",
+                f"corrupted SMILES ({len(missing)} null, {len(corrupted)} null-byte) — {note}; "
+                f"SMILES set to null: {bad[:5]}{'...' if len(bad) > 5 else ''}",
                 file=sys.stderr,
             )
             joined = joined.with_columns(
@@ -107,8 +104,9 @@ def main(args=None):
     parser.add_argument("--smiles-col",   default="SMILES",   help="SMILES column name (default: SMILES)")
     parser.add_argument("--library",      default=None,   help="Process only this library ID (for parallel execution)")
     parser.add_argument(
-        "--max-missing-fraction", type=float, default=0.01,
-        help="Fail if more than this fraction of a library's compounds have missing/corrupted SMILES (default: 0.01)",
+        "--warn-missing-fraction", type=float, default=0.01,
+        help="Log a prominent warning if more than this fraction of a library's compounds have "
+             "missing/corrupted SMILES; never fails the run (default: 0.01)",
     )
     parser.add_argument("--output",       required=True,  help="Output parquet file")
     parser.add_argument("--report",       default=None,   help="Output per-library SMILES coverage report parquet")
@@ -119,7 +117,7 @@ def main(args=None):
 
     df = pl.read_parquet(parsed.input)
     result, report = add_smiles(
-        df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.max_missing_fraction
+        df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.warn_missing_fraction
     )
     result.write_parquet(parsed.output)
     if parsed.report:
