@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, LIBRARY_ID, RAW_READS
-from deliver.postprocess.lib.common import validate_common_format
+from deliver.postprocess.lib.common import validate_common_format, validate_compound_ids
 
 DELI_REQUIRED_COLUMNS = {"library_id", "bb_ids", "count", "raw_count"}  # DELi output column names
 
@@ -70,6 +70,12 @@ def main(args=None):
         df = df.filter(pl.col("bb_ids") != "")
     df = normalize(df)
     validate_common_format(df)
+    try:
+        # IDs built here from DELi counts must equal library_id-A-B-C exactly
+        validate_compound_ids(df, "normalize", check_building_blocks=True)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     df.write_parquet(parsed.output)
 
 

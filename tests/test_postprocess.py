@@ -9,7 +9,7 @@ import pytest
 from deliver.postprocess.add_smiles import main as add_smiles, add_smiles as add_smiles_df
 from deliver.postprocess.merge_smiles import main as merge_smiles_cli, merge_smiles_reports
 from deliver.postprocess.build_library_dict import main as build_library_dict
-from deliver.postprocess.lib.common import validate_common_format
+from deliver.postprocess.lib.common import compound_id_problems, validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.join import main as join_cli, join as join_df, smiles_duplicates
@@ -648,6 +648,28 @@ class TestDeduplicate:
         assert len(df) == 1
         assert df["corrected_count"][0] == 15
         assert df["SMILES"][0] == "CCO"
+
+    def test_warn_mode_merges_and_warns(self, tmp_path, capsys):
+        df = pl.DataFrame({"compound_id": ["L01-1-2", "L01-1-2", "L01-1-3"],
+                           "library_id": ["L01", "L01", "L01"], "corrected_count": [10, 5, 8]})
+        result = deduplicate_df(df, "warn").sort("compound_id")
+        assert result["corrected_count"].to_list() == [15, 8]
+        assert "1 duplicate compound ID(s) found and merged" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("mode", ["fail", "warn", "sum"])
+    def test_corrupted_ids_fail_in_every_mode(self, mode):
+        # SGCDEL_Camp2_CHIP: a block of IDs zeroed to NUL bytes collided and
+        # surfaced as "duplicates"; it must be reported as corruption instead.
+        df = pl.DataFrame({"compound_id": ["\x00" * 8, "\x00" * 8, "L01-1-3"],
+                           "library_id": ["L01", "L01", "L01"], "corrected_count": [1, 2, 8]})
+        with pytest.raises(ValueError, match="corrupted compound_id"):
+            deduplicate_df(df, mode)
+
+    def test_fail_message_escapes_unprintable_ids(self):
+        df = pl.DataFrame({"compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"],
+                           "corrected_count": [10, 5]})
+        with pytest.raises(ValueError, match=r"\['L01-1-2'\]"):
+            deduplicate_df(df, "fail")
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -1735,3 +1757,71 @@ class TestLabel:
     def test_cli_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
             label_cli(["--input", str(tmp_path / "nonexistent.parquet"), "--modes", "count", "--output", str(tmp_path / "out.parquet")])
+
+
+class TestCompoundIdIntegrity:
+    def _df(self, ids, **cycles):
+        cols = {"compound_id": ids, "library_id": ["L01"] * len(ids), "corrected_count": [1] * len(ids)}
+        cols.update(cycles)
+        return pl.DataFrame(cols)
+
+    def test_clean_ids_pass(self):
+        df = self._df(["L01-1-2", "L01-3-4"], A=["1", "3"], B=["2", "4"])
+        assert compound_id_problems(df) == (0, [])
+
+    def test_control_characters_are_caught_without_cycle_columns(self):
+        n, examples = compound_id_problems(self._df(["L01-1-2", "L01\x00\x00", "\x00" * 5]))
+        assert n == 2 and examples[1] == ascii("\x00" * 5)
+
+    def test_id_must_match_its_building_blocks_when_asked(self):
+        df = self._df(["L01-1-2", "L01-9-9"], A=["1", "3"], B=["2", "4"])
+        assert compound_id_problems(df, check_building_blocks=True)[0] == 1
+        # external formats may split IDs differently, so not checked by default
+        assert compound_id_problems(df)[0] == 0
+
+    def test_shorter_libraries_are_not_flagged(self):
+        # a 2-cycle library in a 3-cycle file has C = null
+        df = self._df(["L01-1-2", "L01-3-4-5"], A=["1", "3"], B=["2", "4"], C=[None, "5"])
+        assert compound_id_problems(df, check_building_blocks=True) == (0, [])
+
+    def test_normalize_rejects_ids_that_disagree_with_building_blocks(self, tmp_path, monkeypatch):
+        import deliver.postprocess.normalize as norm
+        inp = tmp_path / "counts.parquet"
+        pl.DataFrame({"library_id": ["L01"], "bb_ids": ["1,2"], "count": [3], "raw_count": [5]}).write_parquet(inp)
+        real = norm.normalize
+        monkeypatch.setattr(norm, "normalize", lambda df: real(df).with_columns(pl.lit("L01-7-7").alias("compound_id")))
+        with pytest.raises(SystemExit):
+            norm.main(["--input", str(inp), "--output", str(tmp_path / "out.parquet")])
+
+    def test_normalize_refuses_to_write_corrupted_ids(self, tmp_path, monkeypatch):
+        import deliver.postprocess.normalize as norm
+        inp = tmp_path / "counts.parquet"
+        pl.DataFrame({"library_id": ["L01"], "bb_ids": ["1,2"], "count": [3], "raw_count": [5]}).write_parquet(inp)
+        real = norm.normalize
+        monkeypatch.setattr(norm, "normalize", lambda df: real(df).with_columns(pl.lit("\x00" * 7).alias("compound_id")))
+        with pytest.raises(SystemExit):
+            norm.main(["--input", str(inp), "--output", str(tmp_path / "out.parquet")])
+        assert not (tmp_path / "out.parquet").exists()
+
+
+class TestMergeSmilesInputGuard:
+    def test_input_that_already_has_smiles_is_rejected(self, tmp_path):
+        orig = tmp_path / "normalized.parquet"
+        pl.DataFrame({"compound_id": ["L01-1-2"], "library_id": ["L01"], "corrected_count": [1],
+                      "SMILES": ["CCO"]}).write_parquet(orig)
+        partial = tmp_path / "L01_with_smiles.parquet"
+        pl.DataFrame({"compound_id": ["L01-1-2"], "library_id": ["L01"], "corrected_count": [1],
+                      "SMILES": ["CCO"]}).write_parquet(partial)
+        with pytest.raises(SystemExit):
+            merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
+                              "--output", str(tmp_path / "merged.parquet")])
+
+    def test_pipeline_stages_merge_input_under_a_different_name(self):
+        # Writing an output named like a staged (symlinked) input overwrites the
+        # upstream task's cached file; see MERGE_SMILES in postprocess.nf.
+        from pathlib import Path
+        nf = (Path(__file__).parents[1] / "pipeline" / "subworkflows" / "postprocess.nf").read_text()
+        block = nf[nf.index("process MERGE_SMILES"):]
+        block = block[:block.index("\n}\n")]
+        assert "stageAs: 'unmerged_normalized.parquet'" in block
+        assert 'path "normalized.parquet", emit: normalized' in block

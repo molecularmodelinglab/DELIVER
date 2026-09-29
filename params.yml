@@ -165,8 +165,10 @@ smiles: null
 
 # on_duplicate_compound_id: what to do when the same compound_id appears more than once.
 #   "fail" — abort with an error listing the offending IDs (default; alerts you to unexpected duplicates)
+#   "warn" — merge them like "sum", but log a warning listing the offending IDs
 #   "sum"  — merge duplicate rows by summing corrected_count and raw_count
 #            If a SMILES column is present, all duplicate rows must have the same SMILES — fails otherwise.
+#   Corrupted compound IDs (null bytes or other control characters) always fail, in every mode.
 on_duplicate_compound_id: "fail"
 
 # labeling: list of labeling modes to apply to the enriched table (adds a label_{mode} boolean column).

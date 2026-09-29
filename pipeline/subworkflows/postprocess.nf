@@ -175,7 +175,10 @@ process MERGE_SMILES {
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    path normalized_parquet
+    // Staged under a different name from the output. Staged inputs are symlinks,
+    // so writing an output of the same name would write through the link and
+    // overwrite NORMALIZE's cached result (breaking -resume).
+    path normalized_parquet, stageAs: 'unmerged_normalized.parquet'
     path partials
     path reports
 
