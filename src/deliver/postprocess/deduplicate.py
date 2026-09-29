@@ -7,15 +7,20 @@ from pathlib import Path
 import polars as pl
 
 from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, RAW_READS, Z_SCORE
+from deliver.postprocess.lib.common import validate_compound_ids
 
 _SMILES = "SMILES"
 
 
 def _fmt(ids: list) -> str:
-    return f"{ids[:5]}{'...' if len(ids) > 5 else ''}"
+    shown = ", ".join(ascii(i) for i in ids[:5])
+    return f"[{shown}{', ...' if len(ids) > 5 else ''}]"
 
 
 def deduplicate(df: pl.DataFrame, on_duplicate_compound_id: str) -> pl.DataFrame:
+    # Corrupted IDs collide with each other and look like duplicates; report them
+    # as what they are, whatever the duplicate mode.
+    validate_compound_ids(df, "deduplicate input")
     if not df[COMPOUND_ID].is_duplicated().any():
         return df
 
@@ -32,13 +37,19 @@ def deduplicate(df: pl.DataFrame, on_duplicate_compound_id: str) -> pl.DataFrame
                 f"{len(ids)} compound ID(s) have conflicting SMILES across duplicate rows: {_fmt(ids)}"
             )
 
+    dup_ids = df.filter(pl.col(COMPOUND_ID).is_duplicated())[COMPOUND_ID].unique().sort().to_list()
     if on_duplicate_compound_id == "fail":
-        dup_ids = df.filter(pl.col(COMPOUND_ID).is_duplicated())[COMPOUND_ID].unique().to_list()
         raise ValueError(
             f"{len(dup_ids)} duplicate compound ID(s) found: {_fmt(dup_ids)}"
         )
+    if on_duplicate_compound_id == "warn":
+        print(
+            f"Warning: {len(dup_ids)} duplicate compound ID(s) found and merged by summing "
+            f"counts: {_fmt(dup_ids)}",
+            file=sys.stderr,
+        )
 
-    # sum mode: merge duplicate rows by summing counts, keeping first value for all other columns
+    # sum/warn mode: merge duplicate rows by summing counts, keeping first value for all other columns
     sum_cols     = [c for c in [CORRECTED_COUNT, RAW_READS] if c in df.columns]
     has_z        = Z_SCORE in df.columns
     first_cols   = [c for c in df.columns if c != COMPOUND_ID and c not in sum_cols and c != Z_SCORE]
@@ -58,11 +69,13 @@ def main(args=None):
     parser.add_argument(
         "--on-duplicate-compound-id",
         required=True,
-        choices=["fail", "sum"],
+        choices=["fail", "warn", "sum"],
         help=(
             "What to do when the same compound_id appears more than once. "
             "'fail' aborts with an error listing the offending IDs (use to catch unexpected duplicates). "
+            "'warn' merges them like 'sum' but logs a warning listing them. "
             "'sum' merges duplicate rows by summing corrected_count and raw_count. "
+            "Corrupted compound IDs always fail, whatever the mode. "
             "If a SMILES column is present, all duplicate rows must have the same SMILES — fails otherwise."
         ),
     )

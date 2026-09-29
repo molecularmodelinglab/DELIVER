@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -9,6 +10,7 @@ import duckdb
 import polars as pl
 
 from deliver.postprocess.lib.columns import LIBRARY_ID
+from deliver.postprocess.lib.common import validate_compound_ids
 
 _REPORT_SCHEMA = {
     "library_id": pl.String,
@@ -39,6 +41,12 @@ def add_smiles(
     n_compounds/n_missing/n_corrupted/missing_fraction, for visibility into
     coverage regardless of the warn threshold.
     """
+    threads = os.environ.get("POLARS_MAX_THREADS")
+    if threads:
+        # DuckDB, like polars, defaults to one thread per core on the node rather
+        # than per core SLURM granted; keep it to the same allocation.
+        duckdb.execute(f"SET threads TO {int(threads)}")
+
     if library is not None:
         smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
         df = df.filter(pl.col(LIBRARY_ID) == library)
@@ -116,6 +124,11 @@ def main(args=None):
         smiles_files = json.load(f)
 
     df = pl.read_parquet(parsed.input)
+    try:
+        validate_compound_ids(df, "add_smiles input")
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     result, report = add_smiles(
         df, smiles_files, parsed.compound_col, parsed.smiles_col, parsed.library, parsed.warn_missing_fraction
     )
