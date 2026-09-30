@@ -4,46 +4,39 @@
  * ==============================================================================
  * PREPROCESS SUBWORKFLOW
  * ==============================================================================
- * Handles:
- * - Input file resolution (GCS or local)
- * - Concatenation of multiple R1/R2 files
- * - QC reporting on raw R1(+R2) reads (FastQC)
- * - Paired-end merging (fastp) or single-end decompression
- * - Output: uncompressed .fastq ready for DELI
+ * Each LANE is processed separately and in parallel, all the way into DELI:
+ *   .ora lanes -> ORA_DECOMPRESS (per read file) -> .fastq.gz
+ *   paired     -> FASTP_MERGE per lane           -> <lane>.merged.fastq.gz
+ *   single-end -> the lane's R1 goes straight on (SPLIT reads .gz/.fastq)
+ *   FASTQC runs per lane on the raw (decompressed) reads.
  *
- * GCS-specific notes:
- * - Input paths from GCS (gs://bucket/file.fastq.gz) are auto-staged
- * - fastp reads .gz files directly (no upfront decompression needed)
- * - All output files written to container work dir, then published to out_dir
+ * Lanes used to be concatenated first (CONCAT) so fastp saw one R1/R2 pair.
+ * That serialized the longest steps (fastp, split) on one task each and made
+ * fastp's memory grow with the whole run. Per-lane results are identical:
+ * fastp merges each read pair independently, and DELi decoding is per read
+ * (chunk layout never changes counts).
+ *
+ * GCS inputs (gs://…) are staged automatically by Nextflow.
  * ==============================================================================
  */
 
 nextflow.enable.dsl = 2
 
 // ============================================================================
-// CONCAT PROCESS
+// ORA_DECOMPRESS — Illumina .ora -> .fastq.gz, one read file per task
 // ============================================================================
-// Concatenates multiple R1 or R2 lane files into a single FASTQ, dispatching on
-// file type so each input is decompressed with the right tool:
-//   .gz  -> gzip stream        (zcat, or a direct cat when every input is .gz)
-//   .ora -> Illumina ORA       (orad -c --raw, DRAGEN ORA decompression)
-//   else -> already uncompressed (cat)
-// Output compression:
-//   all inputs .gz            -> ${read_type}.fastq.gz  (cheap: gzip members concat)
-//   anything else (incl .ora) -> ${read_type}.fastq     (uncompressed)
-// Both forms are handled downstream (fastp uses `zcat -f`; DECOMPRESS gunzips).
-// Works with GCS and local paths (Nextflow stages remote files automatically).
+// fastp and FastQC cannot read ORA. orad writes gzip natively (no --raw), so
+// the output stays compressed. Only .ora inputs come through here; .fastq.gz
+// and .fastq files go to fastp/FastQC directly.
 
-process CONCAT {
-    tag "${read_type}"
+process ORA_DECOMPRESS {
+    tag "${lane} ${read}"
 
     input:
-    tuple val(read_type), path(files)
-    // read_type: "R1" or "R2"
-    // files: one or more .fastq / .fastq.gz / .fastq.ora (staged from GCS if needed)
+    tuple val(lane), val(read), path(ora_file)
 
     output:
-    tuple val(read_type), path("${read_type}.fastq*"), emit: fastq
+    tuple val(lane), val(read), path("${lane}_${read}.fastq.gz"), emit: fastq
 
     script:
     // ORA_REF_PATH is only consulted for reference-based ORA; unset is fine for
@@ -51,114 +44,27 @@ process CONCAT {
     def ora_ref = params.ora_reference ? "export ORA_REF_PATH='${params.ora_reference}'" : "true"
     """
     ${ora_ref}
-
-    # Classify inputs so we can take the cheapest correct path.
-    any_ora=false
-    all_gz=true
-    for f in ${files}; do
-        case "\$f" in
-            *.ora) any_ora=true; all_gz=false ;;
-            *.gz)  ;;
-            *)     all_gz=false ;;
-        esac
-    done
-
-    if [[ "\$all_gz" == true ]]; then
-        # Fast path: concatenated gzip members form one valid gzip stream.
-        echo "Concatenating gzipped files -> ${read_type}.fastq.gz"
-        cat ${files} > ${read_type}.fastq.gz
-    else
-        # Mixed / uncompressed / ORA: decompress per file type, always emit
-        # .fastq.gz — concatenated gzip members form one valid gzip stream
-        # (same trick as the fast path above), so already-gzipped sources are
-        # appended as-is and only non-gz sources are piped through gzip.
-        echo "Decompressing + concatenating (any_ora=\$any_ora) -> ${read_type}.fastq.gz"
-        : > ${read_type}.fastq.gz
-        for f in ${files}; do
-            case "\$f" in
-                *.ora)
-                    # Illumina ORA (DRAGEN). -c: to stdout. Omitting --raw makes
-                    # orad decompress natively to gzip (its default format) instead
-                    # of writing raw FASTQ through a separate gzip process.
-                    orad -c -t ${task.cpus} "\$f" >> ${read_type}.fastq.gz
-                    ;;
-                *.gz)
-                    cat "\$f" >> ${read_type}.fastq.gz
-                    ;;
-                *)
-                    gzip -c "\$f" >> ${read_type}.fastq.gz
-                    ;;
-            esac
-        done
-    fi
+    orad -c -t ${task.cpus} "${ora_file}" > ${lane}_${read}.fastq.gz
     """
 
     stub:
     """
-    cat ${files} > ${read_type}.fastq
-    """
-}
-
-// ============================================================================
-// DECOMPRESS PROCESS
-// ============================================================================
-// Decompresses .fastq.gz to .fastq for single-end path.
-// If input is already uncompressed, just renames it.
-// Not published — DELI reads directly from container work dir.
-
-process DECOMPRESS {
-    tag "decompress"
-
-    input:
-    path gz_file
-    // File object staging from GCS if needed (Nextflow automatic)
-
-    output:
-    path "merged.fastq", emit: fastq
-
-    script:
-    def ora_ref = params.ora_reference ? "export ORA_REF_PATH='${params.ora_reference}'" : "true"
-    """
-    ${ora_ref}
-    case "${gz_file}" in
-        *.ora)
-            echo "Decompressing ORA: ${gz_file}"
-            orad -c --raw -t ${task.cpus} "${gz_file}" > merged.fastq
-            ;;
-        *.gz)
-            echo "Decompressing: ${gz_file}"
-            gunzip -c "${gz_file}" > merged.fastq
-            ;;
-        *)
-            echo "File already uncompressed: ${gz_file}"
-            mv "${gz_file}" merged.fastq
-            ;;
-    esac
-
-    # Verify output
-    if [[ -f merged.fastq ]]; then
-        echo "Output file size: \$(wc -c < merged.fastq) bytes"
-    fi
-    """
-
-    stub:
-    """
-    cp ${gz_file} merged.fastq
+    cp "${ora_file}" ${lane}_${read}.fastq.gz
     """
 }
 
 
 process FASTP_MERGE {
-    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn == 'merged.fastq.gz' ? null : fn }
+    tag "${lane}"
+    publishDir "${params.out_dir}/qc", mode: 'copy', saveAs: { fn -> fn.endsWith('.merged.fastq.gz') ? null : fn }
 
     input:
-    path r1
-    path r2
+    tuple val(lane), path(r1), path(r2)
 
     output:
-    path "merged.fastq.gz", emit: fastq
-    path "fastp.html",      emit: html
-    path "fastp.json",      emit: json
+    path "${lane}.merged.fastq.gz", emit: fastq
+    path "${lane}_fastp.html",      emit: html
+    path "${lane}_fastp.json",      emit: json
 
     script:
     def r1_ext = r1.name.endsWith('.gz') ? 'gz' : 'fastq'
@@ -177,11 +83,11 @@ process FASTP_MERGE {
         --in1 input_R1.${r1_ext} \
         --in2 input_R2.${r2_ext} \
         -m \
-        --merged_out merged.fastq.gz \
+        --merged_out ${lane}.merged.fastq.gz \
         --correction \
         -w ${params.fastp_threads} \
-        -h fastp.html \
-        -j fastp.json
+        -h ${lane}_fastp.html \
+        -j ${lane}_fastp.json
 
     echo "fastp merge complete — read counts available in fastp.json"
     """
@@ -189,8 +95,8 @@ process FASTP_MERGE {
 
     stub:
     """
-    printf '@stub_read1\\nACGTACGT\\n+\\nIIIIIIII\\n' | gzip -c > merged.fastq.gz
-    touch fastp.html fastp.json
+    printf '@stub_read1\\nACGTACGT\\n+\\nIIIIIIII\\n' | gzip -c > ${lane}.merged.fastq.gz
+    touch ${lane}_fastp.html ${lane}_fastp.json
     """
 }
 
@@ -284,30 +190,26 @@ process ORA_DIAGNOSTICS {
 // ============================================================================
 // FASTQC PROCESS
 // ============================================================================
-// Runs FastQC on the raw (per-lane-concatenated, pre-merge) reads to report
-// on sequencing data quality: per-base quality, GC content, adapter content,
-// duplication levels, overrepresented sequences, etc.
-// Called with R1 only on the single-end path, and R1+R2 together (one task,
-// one FastQC invocation) on the paired-end path.
+// Runs FastQC on one lane's raw (pre-merge) reads: per-base quality, GC
+// content, adapter content, duplication levels, overrepresented sequences.
+// R1 only on the single-end path, R1 + R2 (one task) on the paired-end path.
 
 process FASTQC {
-    tag "fastqc"
+    tag "${lane}"
     publishDir "${params.out_dir}/qc", mode: 'copy'
 
     input:
-    path reads
-    // reads: R1 fastq/fastq.gz (single-end) or R1 + R2 (paired-end), as
-    // produced by CONCAT — FastQC accepts one or many files per invocation.
+    tuple val(lane), path(reads)
 
     output:
     path "*_fastqc.html", emit: html
     path "*_fastqc.zip",  emit: zip
 
     script:
-    // Prefix inputs with selection_id via symlink (rather than passing raw
-    // files) so FastQC's output naming carries the selection through, e.g.
-    // R1.fastq.gz -> ${params.selection_id}_R1_fastqc.html — this keeps
-    // reports unambiguous when aggregating across multiple runs (MultiQC).
+    // Prefix inputs with selection_id via symlink so FastQC's output names
+    // carry the selection, e.g. L007_R1.fastq.gz ->
+    // ${params.selection_id}_L007_R1_fastqc.html — unambiguous when reports
+    // from many runs are aggregated (MultiQC).
     """
     renamed=""
     for f in ${reads}; do
@@ -336,87 +238,79 @@ workflow PREPROCESS {
     main:
 
     // ========================================================================
-    // Step 1: Resolve input R1 files
+    // Step 1: pair the lanes
     // ========================================================================
-    // Use Channel.fromPath — preserves gs:// URIs correctly.
-    // file() at workflow scope strips the gs:// scheme to a local path.
-
-    r1_ch = (params.read_1 instanceof List)
-        ? Channel.fromPath(params.read_1)
-        : Channel.fromPath(params.read_1.toString().split(',').collect { it.trim() })
-
-    // Collect back into a list for CONCAT (which expects a list, not a channel of files)
-    r1_files = r1_ch.collect()
-
-    // ========================================================================
-    // Step 2: Determine execution path (paired-end vs single-end)
-    // ========================================================================
-
-    if (params.read_2) {
-
-        r2_ch = (params.read_2 instanceof List)
-            ? Channel.fromPath(params.read_2)
-            : Channel.fromPath(params.read_2.toString().split(',').collect { it.trim() })
-
-        r2_files = r2_ch.collect()
-
-        // === EXTRA / TEMPORARY: .ora diagnostics (counts + timing) ===========
-        // diag = ORA_DIAGNOSTICS(r1_files, r2_files)
-
-        // --- production merge flow (DISABLED during diagnostics; restore for final) ---
-        r1_ch_tuple = r1_files.map { files -> tuple("R1", files) }
-        r2_ch_tuple = r2_files.map { files -> tuple("R2", files) }
-        reads_ch = r1_ch_tuple.mix(r2_ch_tuple)
-        
-        concat_out = CONCAT(reads_ch)
-        
-        r1_fastq = concat_out.fastq.filter { it[0] == "R1" }.map { it[1] }
-        r2_fastq = concat_out.fastq.filter { it[0] == "R2" }.map { it[1] }
-
-        // FastQC on the raw R1 + R2 reads (pre-merge) — one task, both files.
-        FASTQC(r1_fastq.mix(r2_fastq).collect())
-
-        fastq_out = FASTP_MERGE(r1_fastq, r2_fastq).fastq
-
-        // Logging — done after channel ops so paths are still URI strings
-        def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
-        def r2_source = params.read_2.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
-        def r1_list = (params.read_1 instanceof List) ? params.read_1 : params.read_1.toString().split(',').collect { it.trim() }
-        def r2_list = (params.read_2 instanceof List) ? params.read_2 : params.read_2.toString().split(',').collect { it.trim() }
-        log.info "========================================"
-        log.info "PREPROCESS: Paired-End Mode"
-        log.info "========================================"
-        log.info "R1 source : ${r1_source} (${r1_list.size()} file(s))"
-        log.info "R2 source : ${r2_source} (${r2_list.size()} file(s))"
-        r1_list.eachWithIndex { f, i -> log.info "  R1[${i+1}] ${f}" }
-        r2_list.eachWithIndex { f, i -> log.info "  R2[${i+1}] ${f}" }
-        log.info "Merging with fastp..."
-        log.info "========================================"
-
-    } else {
-
-        // === EXTRA / TEMPORARY: .ora diagnostics (counts + timing) ===========
-        // Single-end: pass an empty list for R2 (its loop runs zero times).
-        // diag = ORA_DIAGNOSTICS(r1_files, Channel.value([]))
-
-        // --- production single-end flow (DISABLED during diagnostics; restore for final) ---
-        reads_ch = r1_files.map { files -> tuple("R1", files) }
-        concat_out = CONCAT(reads_ch)
-        FASTQC(concat_out.fastq.map { it[1] })
-        fastq_out = DECOMPRESS(concat_out.fastq.map { it[1] }).fastq
-
-        def r1_source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
-        def r1_list = (params.read_1 instanceof List) ? params.read_1 : params.read_1.toString().split(',').collect { it.trim() }
-        log.info "========================================"
-        log.info "PREPROCESS: Single-End Mode"
-        log.info "========================================"
-        log.info "R1 source : ${r1_source} (${r1_list.size()} file(s))"
-        r1_list.eachWithIndex { f, i -> log.info "  R1[${i+1}] ${f}" }
-        log.info "Decompressing..."
-        log.info "========================================"
+    // read_1[i] pairs with read_2[i] (the same order the old concatenation
+    // relied on). When names follow Illumina's _R1_/_R2_ convention, a
+    // mismatched order is caught here instead of silently mis-pairing reads.
+    def as_list = { v -> v instanceof List ? v : v.toString().split(',').collect { it.trim() }.findAll { it } }
+    def r1_list = as_list(params.read_1)
+    def r2_list = params.read_2 ? as_list(params.read_2) : []
+    def paired  = !r2_list.isEmpty()
+    if (paired && r1_list.size() != r2_list.size()) {
+        error("read_1 has ${r1_list.size()} file(s) but read_2 has ${r2_list.size()} — list one R2 per R1, in the same lane order")
+    }
+    def base_of = { String p -> p.tokenize('/').last() }
+    if (paired) {
+        r1_list.eachWithIndex { r1, i ->
+            def b1 = base_of(r1), b2 = base_of(r2_list[i])
+            if (b1 =~ /_R1[_.]/ && b2 =~ /_R2[_.]/ && b1.replaceFirst(/_R1([_.])/, '_R2$1') != b2) {
+                error("read_1[${i}] and read_2[${i}] are not mates: ${b1} vs ${b2} — list R2 files in the same lane order as R1")
+            }
+        }
+    }
+    // Lane id: the Illumina lane (L007) when present and unique, else 1-based position.
+    def lane_ids = r1_list.withIndex().collect { r1, i ->
+        def m = base_of(r1) =~ /_(L\d{3})_/
+        m.find() ? m.group(1) : "lane${i + 1}"
+    }
+    if (lane_ids.toSet().size() != lane_ids.size()) {
+        lane_ids = lane_ids.withIndex().collect { id, i -> "${i + 1}_${id}".toString() }
     }
 
+    // One entry per read file: [lane, 'R1'|'R2', file]
+    def read_files = []
+    r1_list.eachWithIndex { r1, i ->
+        read_files << [lane_ids[i], 'R1', file(r1)]
+        if (paired) read_files << [lane_ids[i], 'R2', file(r2_list[i])]
+    }
+
+    // ========================================================================
+    // Step 2: ORA -> .fastq.gz where needed (per read file, in parallel)
+    // ========================================================================
+    by_type = Channel.fromList(read_files).branch {
+        ora:   it[2].name.endsWith('.ora')
+        ready: true
+    }
+    reads_ch = ORA_DECOMPRESS(by_type.ora).fastq.mix(by_type.ready)
+
+    r1_ch = reads_ch.filter { it[1] == 'R1' }.map { lane, read, f -> [lane, f] }
+
+    // ========================================================================
+    // Step 3: per-lane QC and merge
+    // ========================================================================
+    if (paired) {
+        r2_ch      = reads_ch.filter { it[1] == 'R2' }.map { lane, read, f -> [lane, f] }
+        lane_pairs = r1_ch.join(r2_ch, failOnMismatch: true, failOnDuplicate: true)   // [lane, r1, r2]
+
+        FASTQC(lane_pairs.map { lane, r1, r2 -> [lane, [r1, r2]] })
+        fastq_out = FASTP_MERGE(lane_pairs).fastq
+    } else {
+        FASTQC(r1_ch.map { lane, r1 -> [lane, [r1]] })
+        fastq_out = r1_ch.map { lane, r1 -> r1 }
+    }
+
+    def source = params.read_1.toString().contains("gs://") ? "GCS bucket" : "local/HPC"
+    log.info "========================================"
+    log.info "PREPROCESS: ${paired ? 'Paired-end' : 'Single-end'}, ${r1_list.size()} lane(s), processed in parallel"
+    log.info "========================================"
+    log.info "Source : ${source}"
+    r1_list.eachWithIndex { f, i ->
+        log.info "  ${lane_ids[i]}  R1 ${f}"
+        if (paired) log.info "  ${lane_ids[i]}  R2 ${r2_list[i]}"
+    }
+    log.info "========================================"
+
     emit:
-    fastq = fastq_out          // production output
-    // report = diag.report          // ORA file -diagnostic-only output (temporary)
+    fastq = fastq_out          // one merged (or single-end) FASTQ per lane
 }

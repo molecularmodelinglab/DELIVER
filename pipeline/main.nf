@@ -29,6 +29,12 @@ include { PREPROCESS  } from './subworkflows/preprocess.nf'
 include { DELI        } from './subworkflows/deli.nf'
 include { POSTPROCESS } from './subworkflows/postprocess.nf'
 
+// Base names of input files (list or comma-separated string), for the decode YAML.
+def input_names(v) {
+    if (!v) return []
+    def items = v instanceof List ? v : v.toString().split(',')
+    return items.collect { it.toString().trim().tokenize('/').last() }.findAll { it }
+}
 
 workflow {
     // Input validation — exactly one entry point must be set
@@ -45,10 +51,9 @@ workflow {
 
         PREPROCESS()
 
-        fastq_uri = PREPROCESS.out.fastq.map { it.toUriString() }
         DELI(
-            PREPROCESS.out.fastq,  // path - for splitFastq
-            fastq_uri              // val  - for YAML
+            PREPROCESS.out.fastq,   // one FASTQ per lane
+            Channel.value(input_names(params.read_1) + input_names(params.read_2))
         )
 
         POSTPROCESS(DELI.out.counts)
@@ -62,11 +67,9 @@ workflow {
         // FASTP_MERGE output stranded in an old work dir. Channel.fromPath
         // preserves gs:// URIs (file() at workflow scope strips the scheme —
         // see the same note in preprocess.nf).
-        merged_ch  = Channel.fromPath(params.merged_fastq)
-        merged_uri = merged_ch.map { it.toUriString() }
         DELI(
-            merged_ch,   // path - for splitFastq
-            merged_uri   // val  - for YAML
+            Channel.fromPath(params.merged_fastq),
+            Channel.value(input_names(params.merged_fastq))
         )
 
         POSTPROCESS(DELI.out.counts)

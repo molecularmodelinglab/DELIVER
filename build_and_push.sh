@@ -157,7 +157,7 @@ fi
 
 # ORA support: forward ORAD_URL (from .env) so the image installs `orad` for
 # .ora inputs. If ORAD_URL is unset/empty the image builds WITHOUT orad and any
-# .ora decode (CONCAT, DECOMPRESS, ORA_DIAGNOSTICS) fails with 'orad: not found'.
+# .ora decode (ORA_DECOMPRESS, ORA_DIAGNOSTICS) fails with 'orad: not found'.
 if [[ -n "${ORAD_URL:-}" ]]; then
     echo "  → ORA support: installing orad from ORAD_URL"
 else

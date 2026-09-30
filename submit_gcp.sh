@@ -23,13 +23,16 @@
 #
 #  Flags:
 #    --run-name <name>    REQUIRED for a fresh run; names all GCS/local dirs
-#    --resume             resume (reuses runs/.last_run_name when --run-name absent)
+#    --resume             resume (reuses runs/.last_run_name when --run-name absent).
+#                         Reattaches to this run's own session, recorded in
+#                         runs/<name>/session_id after every launch.
 #    --resume-id <uuid>   resume a SPECIFIC Nextflow session (implies --resume).
 #                         Bare -resume picks the last entry in .nextflow/history,
 #                         which is wrong if anything else ran from this directory
 #                         since (another launch, or a repo sync that replaced the
 #                         history file) — then the run silently starts over with
-#                         all-new task hashes. Find the right UUID with:
+#                         all-new task hashes. Only needed for runs launched
+#                         before session_id was recorded; find the UUID with:
 #                           grep -m1 "Session UUID" <that run's .nextflow.log>
 #                         (runs/<name>/ and gs://…/<name>/logs/ keep those logs)
 #    --params-file <yml>  base params file (default: $PARAMS_FILE or gcp_params.yml)
@@ -39,6 +42,8 @@
 #    --read-1 <list>      comma-separated R1 file(s); local paths are uploaded
 #    --read-2 <list>      comma-separated R2 file(s); omit for single-end
 #    --merged-fastq <f>   pre-merged FASTQ — skips PREPROCESS (recovery/re-decode)
+#    --target-id <s>      override params target_id (sample metadata)
+#    --selection-id <s>   override params selection_id
 #    --keep-work          keep the GCS work dir even on success
 #    --work-dir/--log-dir explicit overrides of the derived locations
 #    --project/--bucket/--region   override .env values
@@ -60,7 +65,7 @@ source "$ENV_FILE"
 set +a
 
 # ── Defaults & argument parsing ───────────────────────────────
-RUN_NAME="HitGen_WDR91_v0"
+RUN_NAME="FDPS_P223697_S145_default"
 RESUME=false
 RESUME_ID=""
 KEEP_WORK=false
@@ -69,10 +74,12 @@ CONTAINER="${CONTAINER_REGISTRY:-${REGION}-docker.pkg.dev/${PROJECT}/${REPO_NAME
 READ1=""
 READ2=""
 MERGED_FASTQ=""
-SPOT=""
+SPOT=true
 CHUNK_SIZE=""
 WORK_DIR_OVERRIDE=""
 LOG_DIR_OVERRIDE=""
+TARGET_ID=""
+SELECTION_ID=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -86,6 +93,8 @@ while [[ $# -gt 0 ]]; do
         --read-1)      READ1="$2";          shift 2 ;;
         --read-2)      READ2="$2";          shift 2 ;;
         --merged-fastq) MERGED_FASTQ="$2";  shift 2 ;;
+        --target-id)   TARGET_ID="$2";      shift 2 ;;
+        --selection-id) SELECTION_ID="$2";  shift 2 ;;
         --keep-work)   KEEP_WORK=true;      shift   ;;
         --work-dir)    WORK_DIR_OVERRIDE="$2"; shift 2 ;;
         --log-dir)     LOG_DIR_OVERRIDE="$2";  shift 2 ;;
@@ -147,7 +156,7 @@ fi
 echo "$RUN_NAME" > "$LAST_NAME_FILE"
 
 # ── Derived locations (override with --work-dir/--log-dir) ────
-GCS_BASE="gs://${BUCKET}/deliver-runs/${RUN_NAME}"
+GCS_BASE="gs://${BUCKET}/deliver-runs/SK_SGCDEL_CAM002/${RUN_NAME}"
 WORK_URI="${WORK_DIR_OVERRIDE:-${GCS_BASE}/work}"
 OUT_URI="${GCS_BASE}/results"
 INPUT_URI="${GCS_BASE}/inputs"
@@ -241,11 +250,11 @@ fi
 # Unlike test_gcp.sh, counts mode is preserved: the base file's entry
 # points are only overridden when --read-1/--merged-fastq are given.
 DERIVED_PARAMS="${RUN_DIR}/params_run.yml"
-python3 - "$PARAMS_BASE" "$DERIVED_PARAMS" "$OUT_URI" "$CHUNK_SIZE" "$R1_URIS" "$R2_URIS" "$MERGED_URI" "$SPOT" <<'EOF'
+python3 - "$PARAMS_BASE" "$DERIVED_PARAMS" "$OUT_URI" "$CHUNK_SIZE" "$R1_URIS" "$R2_URIS" "$MERGED_URI" "$SPOT" "$TARGET_ID" "$SELECTION_ID" <<'EOF'
 import sys
 import yaml
 
-base_file, out_file, out_dir, chunk_size, r1, r2, merged, spot = sys.argv[1:9]
+base_file, out_file, out_dir, chunk_size, r1, r2, merged, spot, target_id, selection_id = sys.argv[1:11]
 params = yaml.safe_load(open(base_file))
 if r1:
     params["read_1"] = r1.split(",")
@@ -262,11 +271,16 @@ if spot:
     params["spot"] = (spot == "true")
 if chunk_size:
     params["chunk_size"] = int(chunk_size)
+if target_id:
+    params["target_id"] = target_id
+if selection_id:
+    params["selection_id"] = selection_id
 params["out_dir"] = out_dir
 with open(out_file, "w") as fh:
     yaml.safe_dump(params, fh, sort_keys=False)
 print(f"[params] wrote {out_file}")
-for k in ("read_1", "read_2", "merged_fastq", "counts", "out_dir", "chunk_size", "spot"):
+for k in ("read_1", "read_2", "merged_fastq", "counts", "out_dir", "chunk_size", "spot",
+          "target_id", "selection_id"):
     if params.get(k) is not None:
         print(f"[params] {k}: {params[k]}")
 EOF
@@ -279,6 +293,11 @@ DELI_DATA_DIR=$(python3 -c \
 
 RESUME_FLAG=""
 $RESUME && RESUME_FLAG="-resume"
+SESSION_FILE="${RUN_DIR}/session_id"
+if $RESUME && [[ -z "$RESUME_ID" && -s "$SESSION_FILE" ]]; then
+    RESUME_ID="$(cat "$SESSION_FILE")"
+    echo "[resume] using this run's recorded session ${RESUME_ID}"
+fi
 # explicit session id (expands unquoted below to: -resume <uuid>)
 [[ -n "$RESUME_ID" ]] && RESUME_FLAG="-resume ${RESUME_ID}"
 
@@ -301,6 +320,10 @@ nextflow run pipeline/main.nf \
     --log_dir "$RUN_DIR"
 EXIT_CODE=$?
 set -e
+grep -m1 "Session UUID" "${DELIVER_DIR}/.nextflow.log" 2>/dev/null \
+    | awk '{print $NF}' > "${SESSION_FILE}.tmp" \
+    && [[ -s "${SESSION_FILE}.tmp" ]] && mv "${SESSION_FILE}.tmp" "$SESSION_FILE" \
+    || rm -f "${SESSION_FILE}.tmp"
 
 # ── Preserve logs to GCS (success or failure) ─────────────────
 echo ""
@@ -311,6 +334,7 @@ gcloud storage cp \
     "$RUN_DIR"/execution_trace_*.txt \
     "$RUN_DIR"/execution_report_*.html \
     "$DERIVED_PARAMS" \
+    "$SESSION_FILE" \
     "${GCS_BASE}/logs/" --project "$PROJECT" 2>/dev/null \
     && echo "[logs] preserved to GCS ✓" \
     || echo "WARNING: some log files could not be copied to GCS" >&2

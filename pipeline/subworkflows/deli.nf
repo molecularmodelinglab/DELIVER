@@ -8,14 +8,14 @@ process GenerateDecodeYaml {
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    path fastq_file  // Path input (not val) for proper GCS staging
+    val sequence_names  // provenance only: DELi decodes the chunks passed on its CLI
 
     output:
     path "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml", emit: yaml
 
     script:
     def yaml_name = "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml"
-    def files_py  = "[\"${fastq_file}\"]"  // Use the staged path directly
+    def files_py  = "[" + sequence_names.collect { "\"${it}\"" }.join(", ") + "]"
     def libs_py   = params.libraries instanceof List
         ? "[" + params.libraries.collect { "\"${it}\"" }.join(", ") + "]"
         : "[\"${params.libraries}\"]"
@@ -141,7 +141,9 @@ process DecodeChunk {
     val deli_args
 
     output:
-    path "${prefix}_${task.index}_decoded.tsv", emit: decoded_tsv
+    // --split-by-lib: decodes_by_library/<prefix>_<index>_<library>.tsv, one per
+    // library (header-only when a library got no reads in this chunk)
+    path "decodes_by_library/*.tsv", emit: decoded_tsv
     path "${prefix}_${task.index}_decode_statistics.json", emit: decode_stats
     path "${prefix}_${task.index}_deli.log", emit: deli_log
     path "${prefix}_${task.index}_failed_decoding.tsv", emit: failed_tsv, optional: true
@@ -155,6 +157,7 @@ process DecodeChunk {
         "${fastq_chunk}" \
         --out-dir ./ \
         --prefix "${prefix}_${task.index}" \
+        --split-by-lib \
         --skip-report \
         ${fastq_info_flag} \
         ${save_failed_flag}
@@ -163,8 +166,10 @@ process DecodeChunk {
     """
 
     stub:
+    def libs = params.libraries instanceof List ? params.libraries.join(' ') : params.libraries
     """
-    touch ${prefix}_${task.index}_decoded.tsv
+    mkdir -p decodes_by_library
+    for lib in ${libs}; do touch decodes_by_library/${prefix}_${task.index}_\$lib.tsv; done
     echo '{}' > ${prefix}_${task.index}_decode_statistics.json
     touch ${prefix}_${task.index}_deli.log
     """
@@ -197,13 +202,17 @@ process MergeDecodeStatistics {
 }
 
 process CollectDecodeChunks {
+    // One task per library: a compound never spans libraries, so collecting
+    // each library separately (in parallel) gives exactly the same compounds.
+    tag "${library}"
+
     input:
-    path decoded_files
+    tuple val(library), path(decoded_files)
     val prefix
     val deli_args
 
     output:
-    path "${prefix}_collected.ndjson", emit: ndjson
+    path "${prefix}_${library}_collected.ndjson", emit: ndjson
 
     script:
     // NOTE: DELi's `decode collect --compress` is present in the CLI but hard-disabled
@@ -211,13 +220,13 @@ process CollectDecodeChunks {
     // it exits 1 if passed), so this output stays uncompressed until that's fixed upstream.
     """
     deli ${deli_args} decode collect \
-        *_decoded.tsv \
-        --out-loc "${prefix}_collected.ndjson"
+        ${decoded_files} \
+        --out-loc "${prefix}_${library}_collected.ndjson"
     """
 
     stub:
     """
-    echo '{"library_id":"L01","bb_ids":"1,2,3","umi_counts":[{"k":"ACGTACGTACGT","c":1}]}' > ${prefix}_collected.ndjson
+    echo '{"library_id":"${library}","bb_ids":"1,2,3","umi_counts":[{"k":"ACGTACGTACGT","c":1}]}' > ${prefix}_${library}_collected.ndjson
     """
 }
 
@@ -399,12 +408,11 @@ process MergeDebugFailed {
 
 workflow DELI {
     take:
-    fastq_files  // Channel of Path objects
-    fastq_uri
+    fastq_files     // Channel of Path: one FASTQ per lane (or one pre-merged file)
+    sequence_names  // List of input file names, recorded in the decode YAML
 
     main:
-    // Generate decode.yaml — pass the actual Path, not a string
-    selection_file_path = GenerateDecodeYaml(fastq_uri).yaml.first()
+    selection_file_path = GenerateDecodeYaml(sequence_names).yaml   // value channel: all inputs are values
 
     def safePathPattern = ~/^[\w.\-\/]+$/
     if (params.deli_data_dir && !(params.deli_data_dir ==~ safePathPattern)) {
@@ -465,8 +473,23 @@ workflow DELI {
         MergeDebugFailed(decoded.failed_tsv.collect(), prefix_ch)
     }
 
+    // Route each per-library TSV to its library's collect task. Matching on
+    // "_<library>.tsv" (not a split on '_') because library IDs and the
+    // prefix may both contain underscores.
+    def libraries = (params.libraries instanceof List ? params.libraries : [params.libraries])
+        .collect { it.toString() }
+        .sort { -it.length() }
+    decoded_by_lib = decoded.decoded_tsv
+        .flatten()
+        .map { f ->
+            def lib = libraries.find { f.name.endsWith("_${it}.tsv") }
+            if (!lib) error("DecodeChunk wrote ${f.name}, which matches none of params.libraries")
+            [lib, f]
+        }
+        .groupTuple()
+
     collected_decodes = CollectDecodeChunks(
-        decoded.decoded_tsv.collect(),
+        decoded_by_lib,
         prefix_ch,
         Channel.value(deli_args)
     )

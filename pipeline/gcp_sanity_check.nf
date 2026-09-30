@@ -265,7 +265,7 @@ process CHECK_GCS_ACCESS {
 
 // ── Check 6: system tools used in pipeline scripts ────────────────────────
 // Confirms bash builtins (cat, gunzip, tr, head) are available.
-// These are used in CONCAT and DECOMPRESS process scripts.
+// These are used by the ORA_DECOMPRESS process.
 process CHECK_SYSTEM_TOOLS {
     label 'check'
 

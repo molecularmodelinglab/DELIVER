@@ -175,7 +175,10 @@ process MERGE_SMILES {
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    path normalized_parquet
+    // Staged under another name: the output is also normalized.parquet, and an
+    // input link with that name made the script write THROUGH it into
+    // NORMALIZE's own output, leaving only a link as this task's output.
+    path normalized_parquet, stageAs: 'input_normalized.parquet'
     path partials
 
     output:
