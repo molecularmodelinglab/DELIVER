@@ -49,6 +49,9 @@ read_2:
 
 
 
+# counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
+#         Set instead of read_1/read_2. See params.yml for full format documentation.
+counts: null
 
 
 # read_1:
@@ -206,14 +209,12 @@ save_failed: false
 smiles:
   compound_col: compound
   smiles_col: SMILES
-  # on_missing: decoded compounds with no row in the enumerated parquet.
-  #   "fail" — abort (default); "null" — keep the row, SMILES stays null;
-  #   "drop" — remove the row.
-  #   Needed here: the Vernalis enumeration excludes 5 building blocks that the
-  #   library definitions still carry (SGC-DEL0011 cycle A id 59 and cycle C ids
-  #   1862-1865), so their decoded compounds have no SMILES to look up.
-  #   Revert to "fail" once the enumeration files are regenerated.
-  on_missing: "null"
+  # Compounds with no SMILES are always kept (SMILES null) and listed in
+  # smiles_report.tsv; above warn_missing_fraction per library the warning is
+  # flagged as a likely reference/decode mismatch. Expected here: the Vernalis
+  # enumeration excludes 5 building blocks the library definitions still carry
+  # (SGC-DEL0011 cycle A id 59 and cycle C ids 1862-1865).
+  warn_missing_fraction: 0.01
   files:
     SGC-DEL0001: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0001_Fully_Enumerated_Structures.parquet
     SGC-DEL0002: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0002_Fully_Enumerated_Structures.parquet

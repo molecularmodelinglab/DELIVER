@@ -6,10 +6,10 @@ import math
 import polars as pl
 import pytest
 
-from deliver.postprocess.add_smiles import main as add_smiles
-from deliver.postprocess.merge_smiles import main as merge_smiles_cli
+from deliver.postprocess.add_smiles import main as add_smiles, add_smiles as add_smiles_df
+from deliver.postprocess.merge_smiles import main as merge_smiles_cli, merge_smiles_reports
 from deliver.postprocess.build_library_dict import main as build_library_dict
-from deliver.postprocess.lib.common import validate_common_format
+from deliver.postprocess.lib.common import compound_id_problems, validate_common_format
 from deliver.postprocess.deduplicate import main as deduplicate, deduplicate as deduplicate_df
 from deliver.postprocess.disynthons import main as disynthons
 from deliver.postprocess.join import main as join_cli, join as join_df, smiles_duplicates
@@ -183,6 +183,18 @@ class TestValidateCommonFormat:
         })
         validate_common_format(df)  # should not raise
 
+    def test_null_byte_compound_id_fails(self):
+        # signature of a corrupted string buffer (e.g. an uninitialized
+        # allocation that never got written) rather than a real duplicate
+        df = pl.DataFrame({
+            "compound_id":      ["L01-1-2-3", "\x00" * 9],
+            "library_id":       ["L01", "L01"],
+            "raw_reads":        [5, 5],
+            "corrected_count":  [4, 4],
+        })
+        with pytest.raises(SystemExit):
+            validate_common_format(df)
+
 
 class TestBuildLibraryDict:
     def test_runs_and_writes_output(self, deli_data_dir, tmp_path):
@@ -305,43 +317,17 @@ class TestAddSmiles:
         add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
         assert len(pl.read_parquet(out)) == len(pl.read_parquet(inp))
 
-    def test_missing_smiles_raises_error(self, tmp_path):
+    def test_cli_missing_smiles_above_threshold_does_not_fail(self, tmp_path):
         inp = self._make_input(tmp_path)
-        # Only one of the two L01 compounds has a SMILES entry
+        # Only one of the two L01 compounds has a SMILES entry (50% missing)
         smiles_file = self._make_smiles_file(tmp_path, "L01",
             [("L01-1-1", "CCO")])
         smiles_map = tmp_path / "map.json"
         smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
         out = tmp_path / "out.parquet"
-        with pytest.raises(ValueError, match="L01"):
-            add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
-
-    def test_on_missing_null_keeps_row(self, tmp_path):
-        inp = self._make_input(tmp_path)
-        smiles_file = self._make_smiles_file(tmp_path, "L01",
-            [("L01-1-1", "CCO")])
-        smiles_map = tmp_path / "map.json"
-        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
-        out = tmp_path / "out.parquet"
-        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
-                    "--on-missing", "null", "--output", str(out)])
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
         df = pl.read_parquet(out)
-        assert len(df) == len(pl.read_parquet(inp))
         assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] is None
-
-    def test_on_missing_drop_removes_row(self, tmp_path):
-        inp = self._make_input(tmp_path)
-        smiles_file = self._make_smiles_file(tmp_path, "L01",
-            [("L01-1-1", "CCO")])
-        smiles_map = tmp_path / "map.json"
-        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
-        out = tmp_path / "out.parquet"
-        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
-                    "--on-missing", "drop", "--output", str(out)])
-        df = pl.read_parquet(out)
-        assert "L01-2-1" not in df["compound_id"].to_list()
-        # uncovered library L02 is unaffected by on_missing
-        assert "L02-1-1" in df["compound_id"].to_list()
 
     def test_library_flag_restricts_to_one_library(self, tmp_path):
         inp = self._make_input(tmp_path)
@@ -355,6 +341,75 @@ class TestAddSmiles:
         df = pl.read_parquet(out)
         assert set(df["library_id"].to_list()) == {"L01"}
         assert len(df) == 2
+
+    def test_below_threshold_missing_kept_with_null_smiles(self, tmp_path):
+        df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(199)] + ["L01-MISSING-1"],
+            "library_id":  ["L01"] * 200,
+        })
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(199)])
+        result, report = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES")
+        assert len(result) == 200
+        assert result.filter(pl.col("compound_id") == "L01-MISSING-1")["SMILES"][0] is None
+        row = report.to_dicts()[0]
+        assert row["library_id"] == "L01"
+        assert row["n_compounds"] == 200
+        assert row["n_missing"] == 1
+        assert row["n_corrupted"] == 0
+        assert row["missing_fraction"] == pytest.approx(0.005)
+
+    def test_above_threshold_warns_but_does_not_raise(self, tmp_path, capsys):
+        # 2/10 = 20% missing
+        df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
+            "library_id":  ["L01"] * 10,
+        })
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(8)])
+        add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", warn_missing_fraction=0.25)
+        assert "ABOVE" not in capsys.readouterr().err
+        result, report = add_smiles_df(df, {"L01": smiles_file}, "compound", "SMILES", warn_missing_fraction=0.01)
+        assert len(result) == 10
+        assert result.filter(pl.col("compound_id").str.contains("MISS"))["SMILES"].is_null().all()
+        assert report["missing_fraction"][0] == pytest.approx(0.2)
+        assert "ABOVE the 1.00% warn threshold" in capsys.readouterr().err
+
+    def test_cli_warn_missing_fraction_flag(self, tmp_path):
+        inp_df = pl.DataFrame({
+            "compound_id": [f"L01-{i}-1" for i in range(8)] + ["L01-MISS-1", "L01-MISS-2"],
+            "library_id":  ["L01"] * 10,
+        })
+        inp = tmp_path / "norm.parquet"
+        inp_df.write_parquet(inp)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [(f"L01-{i}-1", f"C{i}") for i in range(8)])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--warn-missing-fraction", "0.25", "--output", str(out)])
+        assert len(pl.read_parquet(out)) == 10
+
+    def test_cli_writes_report_when_requested(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        report = tmp_path / "report.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--output", str(out), "--report", str(report)])
+        assert report.exists()
+        report_df = pl.read_parquet(report)
+        assert report_df["library_id"].to_list() == ["L01"]
+        assert report_df["n_missing"].to_list() == [0]
+
+    def test_cli_no_report_file_when_not_requested(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01", [("L01-1-1", "CCO"), ("L01-2-1", "CCC")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map), "--output", str(out)])
+        assert list(tmp_path.glob("*report*")) == []
 
 
 class TestMergeSmiles:
@@ -461,6 +516,48 @@ class TestMergeSmiles:
         with pytest.raises(SystemExit):
             merge_smiles_cli([])
 
+    def _write_report(self, tmp_path, lib_id, n_compounds, n_missing, n_corrupted=0):
+        df = pl.DataFrame({
+            "library_id": [lib_id], "n_compounds": [n_compounds],
+            "n_missing": [n_missing], "n_corrupted": [n_corrupted],
+            "missing_fraction": [n_missing / n_compounds],
+        })
+        p = tmp_path / f"{lib_id}_report.parquet"
+        df.write_parquet(p)
+        return p
+
+    def test_reports_merged_sorted_worst_first(self, tmp_path):
+        r1 = self._write_report(tmp_path, "L01", 100, 1)   # 1%
+        r2 = self._write_report(tmp_path, "L02", 100, 5)   # 5%
+        merged = merge_smiles_reports([r1, r2])
+        assert merged["library_id"].to_list() == ["L02", "L01"]
+
+    def test_cli_writes_report_when_requested(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        report = self._write_report(tmp_path, "L01", 2, 0)
+        out = tmp_path / "merged.parquet"
+        report_out = tmp_path / "smiles_report.tsv"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
+                          "--reports", str(report), "--output", str(out),
+                          "--report-output", str(report_out)])
+        assert report_out.exists()
+        lines = report_out.read_text().strip().splitlines()
+        assert len(lines) == 2  # header + 1 row
+
+    def test_cli_no_report_when_not_requested(self, tmp_path):
+        orig = self._write_orig(tmp_path)
+        partial = self._write_partial(tmp_path, "L01", {
+            "compound_id": ["L01-1-1", "L01-2-1"], "library_id": ["L01", "L01"],
+            "raw_reads": [3, 1], "corrected_count": [3, 1], "SMILES": ["CCO", "CCC"],
+        })
+        out = tmp_path / "merged.parquet"
+        merge_smiles_cli(["--input", str(orig), "--partials", str(partial), "--output", str(out)])
+        assert list(tmp_path.glob("*.tsv")) == []
+
 
 class TestDeduplicate:
     def _write(self, tmp_path, data: dict) -> str:
@@ -551,6 +648,28 @@ class TestDeduplicate:
         assert len(df) == 1
         assert df["corrected_count"][0] == 15
         assert df["SMILES"][0] == "CCO"
+
+    def test_warn_mode_merges_and_warns(self, tmp_path, capsys):
+        df = pl.DataFrame({"compound_id": ["L01-1-2", "L01-1-2", "L01-1-3"],
+                           "library_id": ["L01", "L01", "L01"], "corrected_count": [10, 5, 8]})
+        result = deduplicate_df(df, "warn").sort("compound_id")
+        assert result["corrected_count"].to_list() == [15, 8]
+        assert "1 duplicate compound ID(s) found and merged" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("mode", ["fail", "warn", "sum"])
+    def test_corrupted_ids_fail_in_every_mode(self, mode):
+        # SGCDEL_Camp2_CHIP: a block of IDs zeroed to NUL bytes collided and
+        # surfaced as "duplicates"; it must be reported as corruption instead.
+        df = pl.DataFrame({"compound_id": ["\x00" * 8, "\x00" * 8, "L01-1-3"],
+                           "library_id": ["L01", "L01", "L01"], "corrected_count": [1, 2, 8]})
+        with pytest.raises(ValueError, match="corrupted compound_id"):
+            deduplicate_df(df, mode)
+
+    def test_fail_message_escapes_unprintable_ids(self):
+        df = pl.DataFrame({"compound_id": ["L01-1-2", "L01-1-2"], "library_id": ["L01", "L01"],
+                           "corrected_count": [10, 5]})
+        with pytest.raises(ValueError, match=r"\['L01-1-2'\]"):
+            deduplicate_df(df, "fail")
 
     def test_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
@@ -1638,3 +1757,71 @@ class TestLabel:
     def test_cli_missing_input_fails(self, tmp_path):
         with pytest.raises(SystemExit):
             label_cli(["--input", str(tmp_path / "nonexistent.parquet"), "--modes", "count", "--output", str(tmp_path / "out.parquet")])
+
+
+class TestCompoundIdIntegrity:
+    def _df(self, ids, **cycles):
+        cols = {"compound_id": ids, "library_id": ["L01"] * len(ids), "corrected_count": [1] * len(ids)}
+        cols.update(cycles)
+        return pl.DataFrame(cols)
+
+    def test_clean_ids_pass(self):
+        df = self._df(["L01-1-2", "L01-3-4"], A=["1", "3"], B=["2", "4"])
+        assert compound_id_problems(df) == (0, [])
+
+    def test_control_characters_are_caught_without_cycle_columns(self):
+        n, examples = compound_id_problems(self._df(["L01-1-2", "L01\x00\x00", "\x00" * 5]))
+        assert n == 2 and examples[1] == ascii("\x00" * 5)
+
+    def test_id_must_match_its_building_blocks_when_asked(self):
+        df = self._df(["L01-1-2", "L01-9-9"], A=["1", "3"], B=["2", "4"])
+        assert compound_id_problems(df, check_building_blocks=True)[0] == 1
+        # external formats may split IDs differently, so not checked by default
+        assert compound_id_problems(df)[0] == 0
+
+    def test_shorter_libraries_are_not_flagged(self):
+        # a 2-cycle library in a 3-cycle file has C = null
+        df = self._df(["L01-1-2", "L01-3-4-5"], A=["1", "3"], B=["2", "4"], C=[None, "5"])
+        assert compound_id_problems(df, check_building_blocks=True) == (0, [])
+
+    def test_normalize_rejects_ids_that_disagree_with_building_blocks(self, tmp_path, monkeypatch):
+        import deliver.postprocess.normalize as norm
+        inp = tmp_path / "counts.parquet"
+        pl.DataFrame({"library_id": ["L01"], "bb_ids": ["1,2"], "count": [3], "raw_count": [5]}).write_parquet(inp)
+        real = norm.normalize
+        monkeypatch.setattr(norm, "normalize", lambda df: real(df).with_columns(pl.lit("L01-7-7").alias("compound_id")))
+        with pytest.raises(SystemExit):
+            norm.main(["--input", str(inp), "--output", str(tmp_path / "out.parquet")])
+
+    def test_normalize_refuses_to_write_corrupted_ids(self, tmp_path, monkeypatch):
+        import deliver.postprocess.normalize as norm
+        inp = tmp_path / "counts.parquet"
+        pl.DataFrame({"library_id": ["L01"], "bb_ids": ["1,2"], "count": [3], "raw_count": [5]}).write_parquet(inp)
+        real = norm.normalize
+        monkeypatch.setattr(norm, "normalize", lambda df: real(df).with_columns(pl.lit("\x00" * 7).alias("compound_id")))
+        with pytest.raises(SystemExit):
+            norm.main(["--input", str(inp), "--output", str(tmp_path / "out.parquet")])
+        assert not (tmp_path / "out.parquet").exists()
+
+
+class TestMergeSmilesInputGuard:
+    def test_input_that_already_has_smiles_is_rejected(self, tmp_path):
+        orig = tmp_path / "normalized.parquet"
+        pl.DataFrame({"compound_id": ["L01-1-2"], "library_id": ["L01"], "corrected_count": [1],
+                      "SMILES": ["CCO"]}).write_parquet(orig)
+        partial = tmp_path / "L01_with_smiles.parquet"
+        pl.DataFrame({"compound_id": ["L01-1-2"], "library_id": ["L01"], "corrected_count": [1],
+                      "SMILES": ["CCO"]}).write_parquet(partial)
+        with pytest.raises(SystemExit):
+            merge_smiles_cli(["--input", str(orig), "--partials", str(partial),
+                              "--output", str(tmp_path / "merged.parquet")])
+
+    def test_pipeline_stages_merge_input_under_a_different_name(self):
+        # Writing an output named like a staged (symlinked) input overwrites the
+        # upstream task's cached file; see MERGE_SMILES in postprocess.nf.
+        from pathlib import Path
+        nf = (Path(__file__).parents[1] / "pipeline" / "subworkflows" / "postprocess.nf").read_text()
+        block = nf[nf.index("process MERGE_SMILES"):]
+        block = block[:block.index("\n}\n")]
+        assert "stageAs: 'unmerged_normalized.parquet'" in block
+        assert 'path "normalized.parquet", emit: normalized' in block
