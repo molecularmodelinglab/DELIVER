@@ -24,7 +24,7 @@ work/
 __pycache__/
 *.pyc
 *.pyo
-
+.claude
 deliver.egg-info/
 
 # Generated output
