@@ -179,7 +179,7 @@ min_library_overlap: 8
 revcomp: "YES"
 demultiplexer_algorithm: "regex"
 demultiplexer_mode: "single"
-realign: "NO"
+realign: "YES"
 wiggle: "YES"
 
 # -----------------------------------------------------------------------
