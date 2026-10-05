@@ -329,6 +329,33 @@ class TestAddSmiles:
         df = pl.read_parquet(out)
         assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] is None
 
+    def test_on_missing_null_keeps_row(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--on-missing", "null", "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert len(df) == len(pl.read_parquet(inp))
+        assert df.filter(pl.col("compound_id") == "L01-2-1")["SMILES"][0] is None
+
+    def test_on_missing_drop_removes_row(self, tmp_path):
+        inp = self._make_input(tmp_path)
+        smiles_file = self._make_smiles_file(tmp_path, "L01",
+            [("L01-1-1", "CCO")])
+        smiles_map = tmp_path / "map.json"
+        smiles_map.write_text(json.dumps({"L01": str(smiles_file)}))
+        out = tmp_path / "out.parquet"
+        add_smiles(["--input", str(inp), "--smiles-map", str(smiles_map),
+                    "--on-missing", "drop", "--output", str(out)])
+        df = pl.read_parquet(out)
+        assert "L01-2-1" not in df["compound_id"].to_list()
+        # uncovered library L02 is unaffected by on_missing
+        assert "L02-1-1" in df["compound_id"].to_list()
+
     def test_library_flag_restricts_to_one_library(self, tmp_path):
         inp = self._make_input(tmp_path)
         smiles_file = self._make_smiles_file(tmp_path, "L01",

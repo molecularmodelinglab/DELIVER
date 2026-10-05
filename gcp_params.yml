@@ -9,13 +9,45 @@
 # INPUT — change for every run
 # -----------------------------------------------------------------------
 
+# read_1:
+#   - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R1_001.1000000.fastq.gz"
+#   - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R1_001.1000000.fastq.gz"
+
+# read_2:
+#   - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz
+#   - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz
+
+
+# read_1:
+#   - "gs://aircheck-internal/DELIVER/raw_data_WDR91/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R1_001.fastq.gz"
+#   - "gs://aircheck-internal/DELIVER/raw_data_WDR91/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R1_001.fastq.gz"
+
+# read_2:
+#   - gs://aircheck-internal/DELIVER/raw_data_WDR91/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.fastq.gz
+#   - gs://aircheck-internal/DELIVER/raw_data_WDR91/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.fastq.gz
+
 read_1:
-  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R1_001.1000000.fastq.gz"
-  - "gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R1_001.1000000.fastq.gz"
+  - "gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L004_R1_001.fastq.ora"
+  - "gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L005_R1_001.fastq.ora"
 
 read_2:
-  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L002_R2_001.1000000.fastq.gz
-  - gs://aircheck-internal/DELIVER/raw_data_sample/2-WDR91_GAAGCAAGCG-TAGTCGGTGA_S2_L001_R2_001.1000000.fastq.gz
+  - gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L004_R2_001.fastq.ora
+  - gs://del_sickkids/data/WYB37610.20260915/WYB37610.20260915/SGCDEL_Camp2_FDPS_P223697_S145_L005_R2_001.fastq.ora
+
+# read_1:
+#   - "gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_PARP14A_P223843/SGCDEL_Camp1_PARP14A_P223843_S97_L007_R1_001.fastq.ora"
+#   - "gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_PARP14A_P223843/SGCDEL_Camp1_PARP14A_P223843_S97_L008_R1_001.fastq.ora"
+
+# read_2:
+#   - gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_PARP14A_P223843/SGCDEL_Camp1_PARP14A_P223843_S97_L007_R2_001.fastq.ora
+#   - gs://del_sickkids/data/WYB37322_20260807/SGCDEL_Camp1_PARP14A_P223843/SGCDEL_Camp1_PARP14A_P223843_S97_L008_R2_001.fastq.ora
+
+
+
+
+
+
+
 
 # counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
 #         Set instead of read_1/read_2. See params.yml for full format documentation.
@@ -30,12 +62,26 @@ counts: null
 #   - "gs://del_sickkids/data/WDR91_20260603_VernalisData_TCAGseq/NGS1_S25_L002_R2_001.fastq.ora"
 
 
+# merged_fastq: pre-merged FASTQ — skips PREPROCESS (concat/fastp/fastqc) and
+#         goes straight to decoding. Set instead of read_1/read_2/counts.
+#         Recovery entry point: point it at a known-good FASTP_MERGE output
+#         stranded in an old work dir, e.g.:
+# merged_fastq: "gs://deliver-process/deliver-test-final/<tag>/work/0c/61cc95…/merged.fastq.gz"
+merged_fastq: null
+
 # out_dir: directory where all results will be written
-out_dir: gs://deliver-process/temp-processed-files-temp
+out_dir: gs://deliver-process/temp-processed-files-updated_Sep17
 
 # counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
 #         Set instead of read_1/read_2. See params.yml for full format documentation.
 counts: null
+
+# spot: use spot (preemptible) VMs for Cloud Batch tasks (default true, ~60-90%
+#       cheaper). Set false — or pass --spot false to test_gcp.sh — for recovery
+#       resumes with only a few long serial tasks left: avoids preemption churn,
+#       and a first attempt rescued by a Nextflow retry is invisible to later
+#       -resume (see docs/nextflow-resume-retry-cache-issue.md).
+spot: true
 
 # deli_data_dir: path inside the container image to the DELi data directory.
 #   Not required when library_dict is set.
@@ -50,89 +96,100 @@ library_dict: null
 # SELECTION METADATA
 # -----------------------------------------------------------------------
 
-selection_id: "my_selection_test"
+selection_id: "SGCDEL_Camp2_FDPS_P223697_S145_selection"
 
 # target_id: name of the target protein
-target_id: "WDR91_test_ora"
+target_id: "FDPS_P223697_S145"
 
 # selection_condition: free-text description of selection conditions (e.g. "10nM", "-")
 selection_condition: "-"
 
 # date_ran: date the selection was run (YYYY-MM-DD)
-date_ran: "2026-07-01"
+date_ran: "2026-08-31"
 
 # additional_info: any extra notes to store in the decode.yaml
 additional_info: ""
 
 libraries:
-  - "L01"
-  - "L02"
-  - "L03"
-  - "L04"
-  - "L05"
-  - "L06"
-  - "L07"
-  - "L08"
-  - "L09"
-  - "L10"
-  - "L11"
-  - "L12"
-  - "L13"
-  - "L14"
-  - "L15"
-  - "L16"
-  - "L17"
-  - "L18"
-  - "L19"
-  - "L20"
-  - "L21"
-  - "L22"
-  - "L23"
-  - "L24"
-  - "L25"
-  - "L26"
-  - "L27"
-  - "L28"
-  - "L29"
-  - "L30"
-  - "L31"
-  - "L32"
-  - "L33"
-  - "L34"
-  - "L35"
-  - "L36"
-  - "L37"
-  - "L38"
-  - "L39"
-  - "L40"
-  - "L41"
-  - "L42"
-  - "L43"
-  - "L44"
-  - "L45"
-  - "L46"
-  - "L47"
-  - "L48"
-  - "L49"
-  - "L50"
+  - "SGC-DEL0001"
+  - "SGC-DEL0002"
+  - "SGC-DEL0003"
+  - "SGC-DEL0004"
+  - "SGC-DEL0005"
+  - "SGC-DEL0006"
+  - "SGC-DEL0007"
+  - "SGC-DEL0008"
+  - "SGC-DEL0009"
+  - "SGC-DEL0010"
+  - "SGC-DEL0011"
+  # - "L01"
+  # - "L02"
+  # - "L03"
+  # - "L04"
+  # - "L05"
+  # - "L06"
+  # - "L07"
+  # - "L08"
+  # - "L09"
+  # - "L10"
+  # - "L11"
+  # - "L12"
+  # - "L13"
+  # - "L14"
+  # - "L15"
+  # - "L16"
+  # - "L17"
+  # - "L18"
+  # - "L19"
+  # - "L20"
+  # - "L21"
+  # - "L22"
+  # - "L23"
+  # - "L24"
+  # - "L25"
+  # - "L26"
+  # - "L27"
+  # - "L28"
+  # - "L29"
+  # - "L30"
+  # - "L31"
+  # - "L32"
+  # - "L33"
+  # - "L34"
+  # - "L35"
+  # - "L36"
+  # - "L37"
+  # - "L38"
+  # - "L39"
+  # - "L40"
+  # - "L41"
+  # - "L42"
+  # - "L43"
+  # - "L44"
+  # - "L45"
+  # - "L46"
+  # - "L47"
+  # - "L48"
+  # - "L49"
+  # - "L50"
 
 # -----------------------------------------------------------------------
 # DECODE SETTINGS — defaults work for most cases
 # -----------------------------------------------------------------------
 
-library_error_tolerance: 2
+library_error_tolerance: 1
 min_library_overlap: 8
 revcomp: "YES"
 demultiplexer_algorithm: "regex"
 demultiplexer_mode: "single"
-realign: "NO"
+realign: "YES"
 wiggle: "YES"
 
 # -----------------------------------------------------------------------
 # DELi SETUP — set once, do not change between runs
 # -----------------------------------------------------------------------
 
-chunk_size: 1000000
+chunk_size: 1500000
 prefix: ""
 debug: false
 save_fastq_info: false
@@ -149,7 +206,29 @@ save_failed: false
 #   files:
 #     L01: gs://your-bucket/smiles/L01_enumerated.parquet
 
-smiles: null
+smiles:
+  compound_col: compound
+  smiles_col: SMILES
+  # on_missing: decoded compounds with no row in the enumerated parquet.
+  #   "fail" — abort (default); "null" — keep the row, SMILES stays null;
+  #   "drop" — remove the row.
+  #   Needed here: the Vernalis enumeration excludes 5 building blocks that the
+  #   library definitions still carry (SGC-DEL0011 cycle A id 59 and cycle C ids
+  #   1862-1865), so their decoded compounds have no SMILES to look up.
+  #   Revert to "fail" once the enumeration files are regenerated.
+  on_missing: "null"
+  files:
+    SGC-DEL0001: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0001_Fully_Enumerated_Structures.parquet
+    SGC-DEL0002: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0002_Fully_Enumerated_Structures.parquet
+    SGC-DEL0003: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0003_Fully_Enumerated_Structures.parquet
+    SGC-DEL0004: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0004_Fully_Enumerated_Structures.parquet
+    SGC-DEL0005: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0005_Fully_Enumerated_Structures.parquet
+    SGC-DEL0006: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0006_Fully_Enumerated_Structures.parquet
+    SGC-DEL0007: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0007_Fully_Enumerated_Structures.parquet
+    SGC-DEL0008: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0008_Fully_Enumerated_Structures.parquet
+    SGC-DEL0009: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0009_Fully_Enumerated_Structures.parquet
+    SGC-DEL0010: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0010_Fully_Enumerated_Structures.parquet
+    SGC-DEL0011: gs://vernalis_high_confidential/library/enumerated_parquet/SGC-DEL0011_Fully_Enumerated_Structures.parquet
 
 # on_duplicate_compound_id: what to do when the same compound_id appears more than once.
 #   "fail" — abort with an error (default; catches unexpected duplicates)
@@ -166,9 +245,9 @@ on_duplicate_compound_id: "fail"
 #   count_zscore_global — corrected_count > 5 AND (z_score_global_normalized > 1 OR any disynthon > 1)
 #   count_polyo         — corrected_count > 5 AND (polyo > 4 OR any disynthon polyo > 1)
 #
-# labeling:
-#   - count
-#   - count_zscore_lib
-#   - count_zscore_global
-#   - count_polyo
-labeling: null
+labeling:
+  - count
+  - count_zscore_lib
+  - count_zscore_global
+  - count_polyo
+# labeling: null

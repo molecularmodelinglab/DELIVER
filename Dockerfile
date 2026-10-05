@@ -2,9 +2,9 @@
 
 FROM python:3.13-slim
 
-ARG DELI_REF=patch
 ARG FASTP_VERSION=0.23.4
 ARG FASTQC_VERSION=0.12.1
+ARG SEQKIT_VERSION=2.8.2
 
 LABEL org.opencontainers.image.title="DELIVER"
 LABEL org.opencontainers.image.description="DEL pipeline — GCP Cloud Batch image"
@@ -22,8 +22,15 @@ RUN apt-get update -qq && \
         procps \
         unzip \
         default-jre-headless \
+        fontconfig \
+        fonts-dejavu-core \
+        libharfbuzz0b \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+# fontconfig + a font package + libharfbuzz0b are REQUIRED for FastQC with a
+# headless JRE: OpenJDK 21's libfontmanager.so dynamically links the SYSTEM
+# harfbuzz, and without it (or without fonts) sun.font.SunFontManager fails to
+# initialize and FastQC crashes while rendering its report images 
 
 # Install Google Cloud CLI (gsutil)
 RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | \
@@ -49,6 +56,13 @@ RUN wget -q "https://www.bioinformatics.babraham.ac.uk/projects/fastqc/fastqc_v$
     chmod +x /opt/FastQC/fastqc && \
     ln -s /opt/FastQC/fastqc /usr/local/bin/fastqc && \
     rm /tmp/fastqc.zip
+
+# ── seqkit (worker-side FASTQ splitting — SPLIT process) ──────
+RUN wget -q "https://github.com/shenwei356/seqkit/releases/download/v${SEQKIT_VERSION}/seqkit_linux_amd64.tar.gz" \
+        -O /tmp/seqkit.tar.gz && \
+    tar -xzf /tmp/seqkit.tar.gz -C /usr/local/bin seqkit && \
+    chmod +x /usr/local/bin/seqkit && \
+    rm /tmp/seqkit.tar.gz
 
 # ── orad (Illumina ORA / DRAGEN decompression) ────────────────
 # Only needed when input FASTQs are .ora. Illumina distributes the "ORA
@@ -78,11 +92,15 @@ ENV ORA_REF_PATH=/opt/orad/oradata
 # ── uv + Python dependencies ──────────────────────────────────
 RUN pip install --no-cache-dir uv
 
-# Install DELi from GitHub
-RUN git clone --branch "${DELI_REF}" --depth 1 \
-        https://github.com/Popov-Lab-UNC/DELi.git /opt/deli && \
-    uv pip install --system --no-cache /opt/deli && \
-    rm -rf /opt/deli/.git
+# Install DELi from the staged source in the build context.
+# build_and_push.sh populates .deli-src/ before every build — either from a
+# local DELi clone (--deli-dir / DELI_LOCAL_DIR in .env; used to test fixes
+# such as the streaming-collect branch) or from a fresh GitHub clone of
+# DELI_REF (default: patch). Plain `docker build` therefore needs .deli-src/
+# staged first — run build_and_push.sh, or stage it yourself.
+COPY .deli-src/ /opt/deli/
+RUN echo "DELi source commit: $(cat /opt/deli/DELI_COMMIT 2>/dev/null || echo unknown)" && \
+    uv pip install --system --no-cache /opt/deli
 
 RUN uv pip install --system --no-cache pyarrow polars pyyaml click
 
@@ -127,10 +145,17 @@ EOF
 
 RUN fastp --version 2>&1 | head -1
 RUN fastqc --version
+RUN seqkit version
+
+RUN fc-list | grep -qi dejavu && \
+    missing=$(ldd /usr/lib/jvm/*/lib/libfontmanager.so | grep 'not found' | grep -v libjvm.so || true) && \
+    if [ -n "$missing" ]; then echo "libfontmanager.so unresolved deps:"; echo "$missing"; exit 1; fi && \
+    echo "font stack OK: fontconfig + DejaVu present, libfontmanager deps resolved"
 RUN deli --version
-# Verify orad can locate its reference (only when orad was installed).
-# Non-fatal: prints the resolved refbin path (or a warning) without failing the
-# build, since the exact flag name can vary across orad versions.
+# Informative only (never fails the build): reports whether this image carries
+# the memory-bounded streaming collect (deli.decode.collect) or unpatched DELi.
+RUN python -c "import importlib.util as u; print('streaming collect:', 'present' if u.find_spec('deli.decode.collect') else 'ABSENT (unpatched DELi)')"
+
 RUN if command -v orad >/dev/null 2>&1; then \
         orad --check-ora-reference-path || echo "WARN: orad reference check failed — verify ORA_REF_PATH"; \
     fi

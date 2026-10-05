@@ -8,17 +8,26 @@ process GenerateDecodeYaml {
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    path fastq_file  // Path input (not val) for proper GCS staging
+    val sequence_names  // provenance only: DELi decodes the chunks passed on its CLI
 
     output:
     path "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml", emit: yaml
 
     script:
     def yaml_name = "${params.selection_id}_${params.target_id}_${params.date_ran}.yaml"
-    def files_py  = "[\"${fastq_file}\"]"  // Use the staged path directly
+    def files_py  = "[" + sequence_names.collect { "\"${it}\"" }.join(", ") + "]"
     def libs_py   = params.libraries instanceof List
         ? "[" + params.libraries.collect { "\"${it}\"" }.join(", ") + "]"
         : "[\"${params.libraries}\"]"
+    // YES/NO (or true/false) → Python boolean literals. DELi's DecodingSettings
+    // stores yaml values UNVALIDATED (plain dataclass), and Python treats any
+    // non-empty string — including 'NO' — as truthy: writing these as quoted
+    // strings silently forced realign/revcomp/wiggle ON in every run before
+    // 2026-09-02. Emit real booleans so NO actually means off.
+    def truthy     = ['YES', 'TRUE', 'Y', '1']
+    def revcomp_py = truthy.contains(params.revcomp.toString().toUpperCase()) ? 'True' : 'False'
+    def realign_py = truthy.contains(params.realign.toString().toUpperCase()) ? 'True' : 'False'
+    def wiggle_py  = truthy.contains(params.wiggle.toString().toUpperCase())  ? 'True' : 'False'
     """
     #!/usr/bin/env python
     import yaml
@@ -34,11 +43,11 @@ process GenerateDecodeYaml {
         'decode_settings': {
             'library_error_tolerance': ${params.library_error_tolerance},
             'min_library_overlap':     ${params.min_library_overlap},
-            'revcomp':                 '${params.revcomp}',
+            'revcomp':                 ${revcomp_py},
             'demultiplexer_algorithm': '${params.demultiplexer_algorithm}',
             'demultiplexer_mode':      '${params.demultiplexer_mode}',
-            'realign':                 '${params.realign}',
-            'wiggle':                  '${params.wiggle}',
+            'realign':                 ${realign_py},
+            'wiggle':                  ${wiggle_py},
         },
     }
 
@@ -92,6 +101,36 @@ process ExtractSequenceFiles {
     """
 }
 
+// ============================================================================
+// SPLIT — chunk the merged FASTQ on a WORKER, not on the head job
+// ============================================================================
+// Replaces the `splitFastq` operator. Operators execute inside the Nextflow head process, so the
+// old split ran single-threaded on the launcher machine, materialized every
+// chunk on its local disk before upload, and could not resume mid-split. As a
+// process, the split runs on a Batch worker sized in nextflow.config, seqkit
+// gzips chunks with -j threads (minutes instead of hours at billions of
+// reads), and a completed split is cached by -resume like any other task.
+process SPLIT {
+    tag "${merged_fastq.name}"
+
+    input:
+    path merged_fastq
+
+    output:
+    path "chunks/*.fastq.gz", emit: chunks
+
+    script:
+    """
+    seqkit split2 -s ${params.chunk_size} -j ${task.cpus} -e .gz -O chunks "${merged_fastq}"
+    """
+
+    stub:
+    """
+    mkdir -p chunks
+    cp "${merged_fastq}" chunks/stub.part_001.fastq.gz
+    """
+}
+
 process DecodeChunk {
     tag "${fastq_chunk.name}"
 
@@ -102,7 +141,9 @@ process DecodeChunk {
     val deli_args
 
     output:
-    path "${prefix}_${task.index}_decoded.tsv", emit: decoded_tsv
+    // --split-by-lib: decodes_by_library/<prefix>_<index>_<library>.tsv, one per
+    // library (header-only when a library got no reads in this chunk)
+    path "decodes_by_library/*.tsv", emit: decoded_tsv
     path "${prefix}_${task.index}_decode_statistics.json", emit: decode_stats
     path "${prefix}_${task.index}_deli.log", emit: deli_log
     path "${prefix}_${task.index}_failed_decoding.tsv", emit: failed_tsv, optional: true
@@ -116,6 +157,7 @@ process DecodeChunk {
         "${fastq_chunk}" \
         --out-dir ./ \
         --prefix "${prefix}_${task.index}" \
+        --split-by-lib \
         --skip-report \
         ${fastq_info_flag} \
         ${save_failed_flag}
@@ -124,8 +166,10 @@ process DecodeChunk {
     """
 
     stub:
+    def libs = params.libraries instanceof List ? params.libraries.join(' ') : params.libraries
     """
-    touch ${prefix}_${task.index}_decoded.tsv
+    mkdir -p decodes_by_library
+    for lib in ${libs}; do touch decodes_by_library/${prefix}_${task.index}_\$lib.tsv; done
     echo '{}' > ${prefix}_${task.index}_decode_statistics.json
     touch ${prefix}_${task.index}_deli.log
     """
@@ -158,13 +202,17 @@ process MergeDecodeStatistics {
 }
 
 process CollectDecodeChunks {
+    // One task per library: a compound never spans libraries, so collecting
+    // each library separately (in parallel) gives exactly the same compounds.
+    tag "${library}"
+
     input:
-    path decoded_files
+    tuple val(library), path(decoded_files)
     val prefix
     val deli_args
 
     output:
-    path "${prefix}_collected.ndjson", emit: ndjson
+    path "${prefix}_${library}_collected.ndjson", emit: ndjson
 
     script:
     // NOTE: DELi's `decode collect --compress` is present in the CLI but hard-disabled
@@ -172,13 +220,13 @@ process CollectDecodeChunks {
     // it exits 1 if passed), so this output stays uncompressed until that's fixed upstream.
     """
     deli ${deli_args} decode collect \
-        *_decoded.tsv \
-        --out-loc "${prefix}_collected.ndjson"
+        ${decoded_files} \
+        --out-loc "${prefix}_${library}_collected.ndjson"
     """
 
     stub:
     """
-    echo '{"library_id":"L01","bb_ids":"1,2,3","umi_counts":[{"k":"ACGTACGTACGT","c":1}]}' > ${prefix}_collected.ndjson
+    echo '{"library_id":"${library}","bb_ids":"1,2,3","umi_counts":[{"k":"ACGTACGTACGT","c":1}]}' > ${prefix}_${library}_collected.ndjson
     """
 }
 
@@ -360,12 +408,11 @@ process MergeDebugFailed {
 
 workflow DELI {
     take:
-    fastq_files  // Channel of Path objects
-    fastq_uri
+    fastq_files     // Channel of Path: one FASTQ per lane (or one pre-merged file)
+    sequence_names  // List of input file names, recorded in the decode YAML
 
     main:
-    // Generate decode.yaml — pass the actual Path, not a string
-    selection_file_path = GenerateDecodeYaml(fastq_uri).yaml.first()
+    selection_file_path = GenerateDecodeYaml(sequence_names).yaml   // value channel: all inputs are values
 
     def safePathPattern = ~/^[\w.\-\/]+$/
     if (params.deli_data_dir && !(params.deli_data_dir ==~ safePathPattern)) {
@@ -398,7 +445,21 @@ workflow DELI {
 
     // CRITICAL FIX: Use the FASTQ Path from the input channel, NOT from files.txt
     // The files.txt contains GCS paths which won't stage properly in downstream tasks
-    fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
+    //
+    // PREVIOUS approach — the splitFastq OPERATOR (kept for reference):
+    //   fastq_chunks = fastq_files.splitFastq(by: params.chunk_size, file: true, compress: true)
+    // Operators run inside the HEAD JOB: the whole merged FASTQ was
+    // decompressed, chunked, and re-gzipped single-threaded on the launcher
+    // machine (hours at billions of reads), chunk files filled its local disk
+    // before upload (50 GB on the e2-medium launcher VM), and an interrupted
+    // split could not resume — it re-split from read #1. See the SPLIT
+    // process above for the worker-side replacement. Chunk contents are
+    // identical; only the producer (worker vs head job) and the chunk file
+    // names (*.part_NNN.fastq.gz) changed — DecodeChunk output naming uses
+    // task.index, so downstream is unaffected. NOTE: switching between the
+    // two invalidates decode-and-downstream resume caches (different chunk
+    // files → different task hashes) — change only between campaigns.
+    fastq_chunks = SPLIT(fastq_files).chunks.flatten()
 
     decoded = DecodeChunk(fastq_chunks, selection_file_path, prefix_ch, Channel.value(deli_args))
 
@@ -412,8 +473,23 @@ workflow DELI {
         MergeDebugFailed(decoded.failed_tsv.collect(), prefix_ch)
     }
 
+    // Route each per-library TSV to its library's collect task. Matching on
+    // "_<library>.tsv" (not a split on '_') because library IDs and the
+    // prefix may both contain underscores.
+    def libraries = (params.libraries instanceof List ? params.libraries : [params.libraries])
+        .collect { it.toString() }
+        .sort { -it.length() }
+    decoded_by_lib = decoded.decoded_tsv
+        .flatten()
+        .map { f ->
+            def lib = libraries.find { f.name.endsWith("_${it}.tsv") }
+            if (!lib) error("DecodeChunk wrote ${f.name}, which matches none of params.libraries")
+            [lib, f]
+        }
+        .groupTuple()
+
     collected_decodes = CollectDecodeChunks(
-        decoded.decoded_tsv.collect(),
+        decoded_by_lib,
         prefix_ch,
         Channel.value(deli_args)
     )

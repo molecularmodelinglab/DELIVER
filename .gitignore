@@ -36,3 +36,14 @@ data/
 EXAMPLE
 example_command.md
 pipeline_info/
+
+# DELi source staged by build_and_push.sh for the Docker build
+.deli-src/
+
+# Local GCP test runs (test_gcp.sh)
+test_runs/
+test_runs_*/
+# Local GCP final runs (submit_gcp.sh)
+runs/
+# Read samples cut by scripts/sample_reads/sample_ora.sh (big FASTQs)
+sample_data/
