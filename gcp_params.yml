@@ -49,6 +49,9 @@ read_2:
 
 
 
+# counts: pre-computed counts parquet — skips decoding, runs postprocessing only.
+#         Set instead of read_1/read_2. See params.yml for full format documentation.
+counts: null
 
 
 # read_1:

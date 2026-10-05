@@ -394,6 +394,7 @@ Omit the `smiles` block entirely to skip SMILES joining. When present, the pipel
 smiles:
   compound_col: compound   # column name for compound ID in the SMILES parquet files
   smiles_col:   SMILES     # column name for SMILES in the SMILES parquet files
+  warn_missing_fraction: 0.01  # optional, default 0.01 — see below
   files:
     L01: /path/to/L01_enumerated.parquet
     L02: /path/to/L02_enumerated.parquet
@@ -407,7 +408,9 @@ smiles:
 | `compound` (or value of `compound_col`) | `String` | Compound ID matching the `compound_id` column in `normalized.parquet`, e.g. `L01-1-1-1` |
 | `SMILES` (or value of `smiles_col`) | `String` | SMILES string for the compound |
 
-Files must be **sorted lexicographically** by the compound ID column so that DuckDB can use predicate pushdown for efficient lookup. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
+Lookup is a DuckDB join against each file, so no particular row order is required. Libraries not listed in `smiles.files` pass through with a `null` SMILES value.
+
+**Missing/corrupted SMILES** — decode noise occasionally produces a compound ID with no match in the library's SMILES file, or a corrupted SMILES value. Such compounds are always kept with a `null` SMILES and logged as a warning; the run is never failed. Per library, if the fraction of such compounds exceeds `warn_missing_fraction` (default 1%), the warning is flagged as above threshold — at that point it's more likely a real reference/decode mismatch than noise and worth checking. Either way, per-library coverage (`n_compounds`, `n_missing`, `n_corrupted`, `missing_fraction`) is written to `smiles_report.tsv` alongside `normalized.parquet`, worst coverage first.
 
 ### Labeling (optional)
 

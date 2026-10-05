@@ -60,7 +60,7 @@ process NORMALIZE {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/normalize.py \
         --input  ${counts_parquet} \
         --output normalized.parquet
     """
@@ -95,7 +95,7 @@ process NORMALIZE_CUSTOM {
     def z_arg      = cols.z_score_col   ? "--z-score-col '${cols.z_score_col}'"       : ""
     def smiles_arg = cols.smiles_col    ? "--smiles-col '${cols.smiles_col}'"         : ""
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/normalize_custom.py \
         --input  ${counts_parquet} \
         --output normalized.parquet \
         --corrected-count-col '${cols.corrected_count_col}' \
@@ -124,7 +124,7 @@ process DEDUPLICATE {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/deduplicate.py \
         --input  ${counts_parquet} \
         --output deduplicated.parquet \
         --on-duplicate-compound-id '${params.on_duplicate_compound_id}'
@@ -146,7 +146,8 @@ process ADD_SMILES_LIB {
     tuple path(normalized_parquet), val(lib_id), path(smiles_file)
 
     output:
-    path "${lib_id}_with_smiles.parquet"
+    path "${lib_id}_with_smiles.parquet", emit: smiles
+    path "${lib_id}_smiles_report.parquet", emit: report
 
     script:
     def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_file.name])
@@ -155,7 +156,7 @@ process ADD_SMILES_LIB {
     def on_missing   = params.smiles.on_missing   ?: "fail"
     """
     echo '${smiles_map}' > smiles_map.json
-    python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
         --input        ${normalized_parquet} \
         --smiles-map   smiles_map.json \
         --compound-col ${compound_col} \
@@ -168,6 +169,7 @@ process ADD_SMILES_LIB {
     stub:
     """
     touch ${lib_id}_with_smiles.parquet
+    touch ${lib_id}_smiles_report.parquet
     """
 }
 
@@ -180,23 +182,28 @@ process MERGE_SMILES {
     // NORMALIZE's own output, leaving only a link as this task's output.
     path normalized_parquet, stageAs: 'input_normalized.parquet'
     path partials
+    path reports
 
     output:
-    path "normalized.parquet"
+    path "normalized.parquet", emit: normalized
+    path "smiles_report.tsv", emit: report
 
     script:
     def smiles_col = params.smiles.smiles_col ?: "SMILES"
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
-        --input      ${normalized_parquet} \
-        --partials   ${partials} \
-        --smiles-col ${smiles_col} \
-        --output     normalized.parquet
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/merge_smiles.py \
+        --input         ${normalized_parquet} \
+        --partials      ${partials} \
+        --reports       ${reports} \
+        --smiles-col    ${smiles_col} \
+        --output        normalized.parquet \
+        --report-output smiles_report.tsv
     """
 
     stub:
     """
     cp ${normalized_parquet} normalized.parquet
+    touch smiles_report.tsv
     """
 }
 
@@ -214,12 +221,12 @@ process SINGLETON {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/singleton.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output       singletons.parquet
 
-    python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/disynthons.py \
         --input        ${deduplicated_parquet} \
         --library-dict ${library_dict} \
         --output-dir   .
@@ -246,7 +253,7 @@ process JOIN {
 
     script:
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/join.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/join.py \
         --input      ${singletons_parquet} \
         --disynthons ${disynthon_files} \
         --output     enriched.parquet
@@ -272,7 +279,7 @@ process LABEL {
     script:
     def modes = params.labeling.join(" ")
     """
-    python ${params.deliver_src_dir}/deliver/postprocess/label.py \
+    POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/label.py \
         --input  ${enriched_parquet} \
         --modes  ${modes} \
         --output labeled.parquet
@@ -328,8 +335,8 @@ workflow POSTPROCESS {
             params.smiles.files.collect { lib_id, smiles_path -> [lib_id, file(smiles_path)] }
         )
         ADD_SMILES_LIB(normalized_ch.combine(smiles_ch))
-        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.collect())
-        DEDUPLICATE(MERGE_SMILES.out)
+        MERGE_SMILES(normalized_ch, ADD_SMILES_LIB.out.smiles.collect(), ADD_SMILES_LIB.out.report.collect())
+        DEDUPLICATE(MERGE_SMILES.out.normalized)
     } else {
         DEDUPLICATE(normalized_ch)
     }

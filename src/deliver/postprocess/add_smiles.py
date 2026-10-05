@@ -1,4 +1,4 @@
-"""Add SMILES column to compounds via per-library sorted parquet lookup."""
+"""Add SMILES column to compounds via per-library parquet join."""
 
 import argparse
 import json
@@ -9,6 +9,15 @@ import duckdb
 import polars as pl
 
 from deliver.postprocess.lib.columns import LIBRARY_ID
+from deliver.postprocess.lib.common import validate_compound_ids
+
+_REPORT_SCHEMA = {
+    "library_id": pl.String,
+    "n_compounds": pl.Int64,
+    "n_missing": pl.Int64,
+    "n_corrupted": pl.Int64,
+    "missing_fraction": pl.Float64,
+}
 
 
 def add_smiles(
@@ -26,24 +35,30 @@ def add_smiles(
     "null" keeps the row with a null SMILES, "drop" removes the row. Corrupted
     (null-byte) SMILES always raise — that is file damage, not a coverage gap.
     """
+    threads = os.environ.get("POLARS_MAX_THREADS")
+    if threads:
+        # DuckDB, like polars, defaults to one thread per core on the node rather
+        # than per core SLURM granted; keep it to the same allocation.
+        duckdb.execute(f"SET threads TO {int(threads)}")
+
     if library is not None:
         smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
         df = df.filter(pl.col(LIBRARY_ID) == library)
 
     results = []
+    report_rows = []
     covered_libs = set(smiles_files.keys())
 
     for lib_id, file_path in smiles_files.items():
         df_lib = df.filter(pl.col(LIBRARY_ID) == lib_id)
         if len(df_lib) == 0:
             continue
-        needed = df_lib["compound_id"].to_list()
-        needed_str = ", ".join(f"'{c}'" for c in needed)
+        needed = df_lib.select("compound_id").unique()
         smiles_df = pl.from_arrow(
             duckdb.execute(f"""
-                SELECT {compound_col} AS compound_id, {smiles_col}
-                FROM read_parquet('{file_path}')
-                WHERE {compound_col} IN ({needed_str})
+                SELECT s.{compound_col} AS compound_id, s.{smiles_col}
+                FROM read_parquet('{file_path}') AS s
+                JOIN needed ON needed.compound_id = s.{compound_col}
             """).arrow()
         )
         joined = df_lib.join(smiles_df, on="compound_id", how="left")
@@ -76,7 +91,8 @@ def add_smiles(
     if len(uncovered) > 0:
         results.append(uncovered.with_columns(pl.lit(None).cast(pl.String).alias(smiles_col)))
 
-    return pl.concat(results)
+    report = pl.DataFrame(report_rows, schema=_REPORT_SCHEMA)
+    return pl.concat(results), report
 
 
 def main(args=None):
@@ -89,6 +105,7 @@ def main(args=None):
     parser.add_argument("--on-missing",   default="fail", choices=["fail", "null", "drop"],
                         help="Compounds absent from the SMILES file: fail (default), keep with null SMILES, or drop")
     parser.add_argument("--output",       required=True,  help="Output parquet file")
+    parser.add_argument("--report",       default=None,   help="Output per-library SMILES coverage report parquet")
     parsed = parser.parse_args(args)
 
     with open(parsed.smiles_map) as f:
