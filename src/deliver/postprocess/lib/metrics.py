@@ -35,6 +35,20 @@ def z_score(corrected_count: pl.Series, n_compounds: int) -> pl.Series:
     return (corrected_count * (n_compounds / n_total) - 1) / denom
 
 
+def z_score_expr(corrected_count: pl.Expr, n_total: int, n_compounds: int) -> pl.Expr:
+    """z_score as a polars expression, for streaming tables too large to load.
+
+    Same formula and the same floating-point operations in the same order as
+    z_score, so the values are identical; n_total (the sum of the counts the
+    z-score is over) must be computed beforehand, since an expression over a
+    stream cannot see the whole column.
+    """
+    denom = math.sqrt(n_compounds - 1)
+    if denom == 0:
+        return pl.lit(float("nan"), dtype=pl.Float64)
+    return (corrected_count * (n_compounds / n_total) - 1) / denom
+
+
 # -- polyO --------------------------------------------------------------------
 
 class PolyO:
@@ -72,3 +86,13 @@ class PolyO:
         """Normalized polyO score relative to calibrated baseline."""
         denom = self.c_cpd * (-_poisson.logpmf(self.c_read, self.s_bar) / math.log(10))
         return raw / denom
+
+    def score_expr(self, count: pl.Expr) -> pl.Expr:
+        """score(raw(count)) as a streaming polars expression.
+
+        Applies the same two functions batch by batch; both are element-wise,
+        so the values are identical to calling them on the whole column.
+        """
+        return count.map_batches(
+            lambda batch: self.score(self.raw(batch)), return_dtype=pl.Float64, is_elementwise=True,
+        )
