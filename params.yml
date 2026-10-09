@@ -166,14 +166,13 @@ save_failed: false
 # carried through to singletons.parquet. Disynthons are not affected.
 # compound_col - column name for compound ID in your SMILES files
 # smiles_col   - column name for SMILES in your SMILES files
-# warn_missing_fraction - compounds absent from the SMILES file are kept with a
-#                null SMILES; above this fraction per library the warning is
-#                flagged (default 0.01). Coverage goes to smiles_report.tsv.
+# on_missing   - compounds absent from the SMILES file: "fail" (default),
+#                "null" (keep row, null SMILES), or "drop" (remove row)
 # files        - mapping of library_id to sorted enumerated parquet file
 # smiles:
 #   compound_col: compound
 #   smiles_col: SMILES
-#   warn_missing_fraction: 0.01
+#   on_missing: "fail"
 #   files:
 #     L01: /path/to/L01_enumerated.parquet
 #     L04: /path/to/L04_enumerated.parquet

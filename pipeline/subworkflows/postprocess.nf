@@ -153,7 +153,7 @@ process ADD_SMILES_LIB {
     def smiles_map   = groovy.json.JsonOutput.toJson([(lib_id): smiles_file.name])
     def compound_col = params.smiles.compound_col ?: "compound"
     def smiles_col   = params.smiles.smiles_col   ?: "SMILES"
-    def warn_missing = params.smiles.warn_missing_fraction ?: 0.01
+    def on_missing   = params.smiles.on_missing   ?: "fail"
     """
     echo '${smiles_map}' > smiles_map.json
     POLARS_MAX_THREADS=${task.cpus} python ${params.deliver_src_dir}/deliver/postprocess/add_smiles.py \
@@ -162,9 +162,8 @@ process ADD_SMILES_LIB {
         --compound-col ${compound_col} \
         --smiles-col   ${smiles_col} \
         --library      ${lib_id} \
-        --warn-missing-fraction ${warn_missing} \
-        --output       ${lib_id}_with_smiles.parquet \
-        --report       ${lib_id}_smiles_report.parquet
+        --on-missing   ${on_missing} \
+        --output       ${lib_id}_with_smiles.parquet
     """
 
     stub:
@@ -178,10 +177,10 @@ process MERGE_SMILES {
     publishDir "${params.out_dir}", mode: 'copy'
 
     input:
-    // Staged under a different name from the output. Staged inputs are symlinks,
-    // so writing an output of the same name would write through the link and
-    // overwrite NORMALIZE's cached result (breaking -resume).
-    path normalized_parquet, stageAs: 'unmerged_normalized.parquet'
+    // Staged under another name: the output is also normalized.parquet, and an
+    // input link with that name made the script write THROUGH it into
+    // NORMALIZE's own output, leaving only a link as this task's output.
+    path normalized_parquet, stageAs: 'input_normalized.parquet'
     path partials
     path reports
 

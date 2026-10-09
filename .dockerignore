@@ -32,6 +32,7 @@ dag.html
 dag.png
 deli.log
 
+
 # Large data / input files (never needed in the image)
 # data/
 *.fastq
