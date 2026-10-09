@@ -7,7 +7,8 @@ from pathlib import Path
 import polars as pl
 
 from deliver.postprocess.lib.columns import CORRECTED_COUNT, POLYO, Z_SCORE, Z_SCORE_GLOBAL, Z_SCORE_LIB
-from deliver.postprocess.join import smiles_duplicates
+from deliver.postprocess.join import smiles_duplicates_in_file
+from deliver.postprocess.lib.common import column_names, sink_parquet
 
 _COUNT_THRESHOLD          = 5
 _ZSCORE_THRESHOLD         = 1.0
@@ -17,7 +18,7 @@ _POLYO_DISYNTHON_THRESHOLD = 4.0
 
 def _any_disynthon(df: pl.DataFrame, col_suffix: str, threshold: float) -> pl.Expr:
     """OR over all disynthon columns whose name ends with _{col_suffix} > threshold."""
-    cols = [c for c in df.columns if c.endswith("_" + col_suffix)]
+    cols = [c for c in column_names(df) if c.endswith("_" + col_suffix)]
     if not cols:
         return pl.lit(False)
     return pl.any_horizontal(*[pl.col(c) > threshold for c in cols])
@@ -76,7 +77,7 @@ def label(df: pl.DataFrame, modes: list[str]) -> pl.DataFrame:
     for mode in modes:
         if mode not in MODES:
             raise ValueError(f"Unknown labeling mode: {mode!r}. Available: {list(MODES)}")
-        missing = [c for c in _MODE_REQUIRED_COLS[mode] if c not in df.columns]
+        missing = [c for c in _MODE_REQUIRED_COLS[mode] if c not in column_names(df)]
         if missing:
             raise ValueError(
                 f"Labeling mode '{mode}' requires column(s) {missing} which are missing from the input table."
@@ -99,13 +100,13 @@ def main(args=None):
         sys.exit(1)
 
     try:
-        labeled = label(pl.read_parquet(input_path), parsed.modes)
+        labeled = label(pl.scan_parquet(input_path), parsed.modes)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    labeled.write_parquet(parsed.output)
+    sink_parquet(labeled, parsed.output)
 
-    dupes = smiles_duplicates(labeled)
+    dupes = smiles_duplicates_in_file(Path(parsed.output))
     if dupes is not None:
         output_path = Path(parsed.output)
         dupes.write_parquet(output_path.with_name(output_path.stem + "_duplicates.parquet"))
