@@ -135,7 +135,13 @@ def main(args=None):
     with open(parsed.smiles_map) as f:
         smiles_files = json.load(f)
 
-    df = pl.read_parquet(parsed.input)
+    # Load only this task's library: the per-library ADD_SMILES_LIB jobs used to
+    # read every library's rows (328M for TREX1) and filter afterwards, so even
+    # the smallest library needed RAM for the whole normalized parquet.
+    lf = pl.scan_parquet(parsed.input)
+    if parsed.library is not None:
+        lf = lf.filter(pl.col(LIBRARY_ID) == parsed.library)
+    df = lf.collect()
     try:
         validate_compound_ids(df, "add_smiles input")
     except ValueError as e:
