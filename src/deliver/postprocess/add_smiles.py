@@ -42,7 +42,8 @@ def add_smiles(
         duckdb.execute(f"SET threads TO {int(threads)}")
 
     if library is not None:
-        smiles_files = {library: smiles_files[library]} if library in smiles_files else {}
+        smiles_files = {
+            library: smiles_files[library]} if library in smiles_files else {}
         df = df.filter(pl.col(LIBRARY_ID) == library)
 
     results = []
@@ -89,7 +90,8 @@ def add_smiles(
 
     uncovered = df.filter(~pl.col(LIBRARY_ID).is_in(covered_libs))
     if len(uncovered) > 0:
-        results.append(uncovered.with_columns(pl.lit(None).cast(pl.String).alias(smiles_col)))
+        results.append(uncovered.with_columns(
+            pl.lit(None).cast(pl.String).alias(smiles_col)))
 
     report = pl.DataFrame(report_rows, schema=_REPORT_SCHEMA)
     return pl.concat(results), report

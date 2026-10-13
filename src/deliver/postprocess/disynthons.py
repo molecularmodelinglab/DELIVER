@@ -11,7 +11,7 @@ from deliver.postprocess.lib.columns import (
     CORRECTED_COUNT, CORRECTED_COUNT_SUM, LIBRARY_ID, LINE_SIZE, LINE_STRENGTH, LINE_STRENGTH_STD,
     POLYO, RAW_READS, RAW_READS_SUM, Z_SCORE_GLOBAL, Z_SCORE_LIB,
 )
-from deliver.postprocess.lib.common import load_inputs
+from deliver.postprocess.lib.common import scan_inputs
 from deliver.postprocess.lib.metrics import PolyO, z_score
 
 _POLYO_RAW = "_polyo_raw"
@@ -70,15 +70,32 @@ def _add_lib_statistics(
 
 def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict) -> pl.DataFrame:
     """Aggregate to disynthon level and compute statistics per library, then add global z-score."""
-    has_raw = RAW_READS in df.columns
-    n_possible_total = sum(math.prod(lib.values()) for lib in library_dict.values())
-    d = df[CORRECTED_COUNT].sum() / n_possible_total
+    return all_disynthon_counts(df.lazy(), [(col1, col2)], library_dict)[col1 + col2]
 
-    results = []
+
+def all_disynthon_counts(
+    lf: pl.LazyFrame, pairs: list[tuple[str, str]], library_dict: dict,
+) -> dict[str, pl.DataFrame]:
+    """disynthon_counts for every cycle pair, loading one library at a time.
+
+    The disynthon tables are small, but the compound table they come from may
+    not fit in memory (328M rows for TREX1). Each library is loaded once, with
+    only the columns the pairs need, and goes through the same per-library
+    code as before; only the results are kept. Keyed by pair name ("AB", ...).
+    """
+    names = lf.collect_schema().names()
+    has_raw = RAW_READS in names
+    n_possible_total = sum(math.prod(lib.values()) for lib in library_dict.values())
+    d = lf.select(pl.col(CORRECTED_COUNT).sum()).collect(engine="streaming").item() / n_possible_total
+    cycle_cols = sorted({c for pair in pairs for c in pair})
+    keep = [LIBRARY_ID, *cycle_cols, CORRECTED_COUNT] + ([RAW_READS] if has_raw else [])
+
+    results: dict[str, list[pl.DataFrame]] = {col1 + col2: [] for col1, col2 in pairs}
     for lib_id, lib in library_dict.items():
-        if col1 not in lib or col2 not in lib:
+        lib_pairs = [(col1, col2) for col1, col2 in pairs if col1 in lib and col2 in lib]
+        if not lib_pairs:
             continue
-        df_lib_orig = df.filter(pl.col(LIBRARY_ID) == lib_id)
+        df_lib_orig = lf.filter(pl.col(LIBRARY_ID) == lib_id).select(keep).collect(engine="streaming")
         if len(df_lib_orig) == 0:
             continue
 
@@ -87,22 +104,27 @@ def disynthon_counts(df: pl.DataFrame, col1: str, col2: str, library_dict: dict)
         polyo = PolyO(d, df_lib_orig[CORRECTED_COUNT].sum(), df_lib_orig.height, n_possible, n_features)
         df_lib_orig = df_lib_orig.with_columns(polyo.raw(df_lib_orig[CORRECTED_COUNT]).alias(_POLYO_RAW))
 
-        agg = _aggregate(df_lib_orig, col1, col2, has_raw)
-        results.append(_add_lib_statistics(agg, lib, col1, col2, polyo))
+        for col1, col2 in lib_pairs:
+            agg = _aggregate(df_lib_orig, col1, col2, has_raw)
+            results[col1 + col2].append(_add_lib_statistics(agg, lib, col1, col2, polyo))
+        del df_lib_orig
 
-    df_result = pl.concat(results)
-    n_total_disynthons = sum(
-        lib[col1] * lib[col2]
-        for lib in library_dict.values()
-        if col1 in lib and col2 in lib
-    )
-    df_result = df_result.with_columns(
-        z_score(df_result[CORRECTED_COUNT], n_total_disynthons).alias(Z_SCORE_GLOBAL)
-    )
-    rename = {CORRECTED_COUNT: CORRECTED_COUNT_SUM}
-    if RAW_READS in df_result.columns:
-        rename[RAW_READS] = RAW_READS_SUM
-    return df_result.rename(rename)
+    out = {}
+    for col1, col2 in pairs:
+        df_result = pl.concat(results[col1 + col2])
+        n_total_disynthons = sum(
+            lib[col1] * lib[col2]
+            for lib in library_dict.values()
+            if col1 in lib and col2 in lib
+        )
+        df_result = df_result.with_columns(
+            z_score(df_result[CORRECTED_COUNT], n_total_disynthons).alias(Z_SCORE_GLOBAL)
+        )
+        rename = {CORRECTED_COUNT: CORRECTED_COUNT_SUM}
+        if RAW_READS in df_result.columns:
+            rename[RAW_READS] = RAW_READS_SUM
+        out[col1 + col2] = df_result.rename(rename)
+    return out
 
 
 def main(args=None):
@@ -112,14 +134,14 @@ def main(args=None):
     parser.add_argument("--output-dir",   required=True, help="Output directory for disynthon parquet files.")
     parsed = parser.parse_args(args)
 
-    df, library_dict = load_inputs(Path(parsed.input), Path(parsed.library_dict))
+    lf, library_dict = scan_inputs(Path(parsed.input), Path(parsed.library_dict))
 
     output_dir = Path(parsed.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for col1, col2 in combinations(_cycle_cols(library_dict), 2):
-        name = col1 + col2
-        disynthon_counts(df, col1, col2, library_dict).write_parquet(output_dir / f"disynthon_{name}.parquet")
+    pairs = list(combinations(_cycle_cols(library_dict), 2))
+    for name, df_pair in all_disynthon_counts(lf, pairs, library_dict).items():
+        df_pair.write_parquet(output_dir / f"disynthon_{name}.parquet")
 
 
 if __name__ == "__main__":

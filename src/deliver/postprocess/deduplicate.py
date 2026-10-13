@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from deliver.postprocess.lib.columns import COMPOUND_ID, CORRECTED_COUNT, RAW_READS, Z_SCORE
-from deliver.postprocess.lib.common import validate_compound_ids
+from deliver.postprocess.lib.common import has_duplicate_ids, sink_parquet, validate_compound_ids
 
 _SMILES = "SMILES"
 
@@ -86,8 +86,15 @@ def main(args=None):
         print(f"Error: input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    df = pl.read_parquet(input_path)
     try:
+        lf = pl.scan_parquet(input_path)
+        validate_compound_ids(lf, "deduplicate input")
+        if not has_duplicate_ids(lf):
+            # The normal case: deduplicate() would return the table unchanged, so
+            # stream it through instead of loading every compound (328M for TREX1).
+            sink_parquet(lf, parsed.output)
+            return
+        df = pl.read_parquet(input_path)
         deduplicate(df, parsed.on_duplicate_compound_id).write_parquet(parsed.output)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)

@@ -11,6 +11,7 @@ from deliver.postprocess.lib.columns import (
     CORRECTED_COUNT_SUM, LIBRARY_ID, LINE_SIZE, LINE_STRENGTH, LINE_STRENGTH_STD,
     POLYO, RAW_READS_SUM, Z_SCORE_GLOBAL, Z_SCORE_LIB,
 )
+from deliver.postprocess.lib.common import duplicated_values, sink_parquet
 
 _METRIC_COLS = [CORRECTED_COUNT_SUM, RAW_READS_SUM, LINE_SIZE, LINE_STRENGTH, LINE_STRENGTH_STD, Z_SCORE_LIB, Z_SCORE_GLOBAL, POLYO]
 _SMILES = "SMILES"
@@ -25,6 +26,11 @@ def _pair_from_path(path: Path) -> str:
 
 
 def join(singletons: pl.DataFrame, disynthon_files: list[Path]) -> pl.DataFrame:
+    return join_lazy(singletons.lazy(), disynthon_files).collect()
+
+
+def join_lazy(singletons: pl.LazyFrame, disynthon_files: list[Path]) -> pl.LazyFrame:
+    """join as a query to stream to disk; rows keep the singletons table's order."""
     result = singletons
     for path in sorted(disynthon_files, key=lambda p: p.name):
         pair = _pair_from_path(path)
@@ -37,7 +43,7 @@ def join(singletons: pl.DataFrame, disynthon_files: list[Path]) -> pl.DataFrame:
             {c: prefix + c for c in metric_cols}
         )
 
-        result = result.join(df_dis, on=join_cols, how="left")
+        result = result.join(df_dis.lazy(), on=join_cols, how="left", maintain_order="left")
 
     return result
 
@@ -52,6 +58,17 @@ def smiles_duplicates(enriched: pl.DataFrame) -> pl.DataFrame | None:
     return dupes.sort(_SMILES)
 
 
+def smiles_duplicates_in_file(path: Path) -> pl.DataFrame | None:
+    """smiles_duplicates for a parquet too large to load (streams; loads only the duplicate rows)."""
+    lf = pl.scan_parquet(path)
+    if _SMILES not in lf.collect_schema().names():
+        return None
+    dup_smiles = duplicated_values(lf, _SMILES)
+    if dup_smiles.is_empty():
+        return None
+    return smiles_duplicates(lf.filter(pl.col(_SMILES).is_in(dup_smiles.implode())).collect(engine="streaming"))
+
+
 def main(args=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input",      required=True,        help="Singletons parquet file.")
@@ -64,12 +81,11 @@ def main(args=None):
         print(f"Error: input file not found: {input_path}", file=sys.stderr)
         sys.exit(1)
 
-    singletons = pl.read_parquet(input_path)
+    singletons = pl.scan_parquet(input_path)
     disynthon_files = [Path(p) for p in parsed.disynthons]
-    enriched = join(singletons, disynthon_files)
-    enriched.write_parquet(parsed.output)
+    sink_parquet(join_lazy(singletons, disynthon_files), parsed.output)
 
-    dupes = smiles_duplicates(enriched)
+    dupes = smiles_duplicates_in_file(Path(parsed.output))
     if dupes is not None:
         output_path = Path(parsed.output)
         dupes_path = output_path.with_name(output_path.stem + "_duplicates.parquet")
