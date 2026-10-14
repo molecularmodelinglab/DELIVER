@@ -1,5 +1,7 @@
 # DELIVER
 
+[![DOI](https://zenodo.org/badge/1186621858.svg)](https://doi.org/10.5281/zenodo.23356061)
+
 Nextflow pipeline for DEL (DNA Encoded Library) data processing.
 
 **We are using the "patch" branch of DELi as of now:** https://github.com/Popov-Lab-UNC/DELi/tree/patch
